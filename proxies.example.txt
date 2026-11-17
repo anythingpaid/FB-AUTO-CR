@@ -1,4 +1,4 @@
-# Proxies for FB-Auto-Cr - one proxy per line
+# Proxies for FB-AUTO-CR - one proxy per line
 # === WEBSHARE ROTATING (recommended for Mode 4) ===
 # Sirf EK line kaafi hai, list ki zaroorat nahi - Webshare khud rotate karega:
 # http://YOURUSER-rotate:YOURPASS@p.webshare.io:80
