@@ -5,6 +5,14 @@ import platform
 # Repository and folder name on mobile sdcard
 REPO_FOLDER_NAME = "facebook-account-registration"
 
+# Project root = folder containing main.py (one level above core/).
+# The tool is distributed by git clone and run from anywhere, so every
+# file path must resolve to the tool's own folder, never to the current
+# working directory (a user who runs `python C:\...\main.py` from
+# another folder would otherwise lose Number_List.txt, reviews.txt,
+# proxies.txt and output/).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 # Check if the current execution environment is Android / Termux
 def is_termux_or_mobile():
@@ -28,7 +36,9 @@ def get_base_storage_dir():
                 return target_dir
             except Exception:
                 pass
-    return os.path.abspath(".")
+    # On PC: the tool's own folder, so clone-and-run works from any
+    # directory. Never the current working directory.
+    return _PROJECT_ROOT
 
 
 # Get the primary directory path for output files

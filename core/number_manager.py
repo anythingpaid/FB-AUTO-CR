@@ -20,7 +20,8 @@ def get_number_list_filepath():
         sdcard_num_file = os.path.join(get_base_storage_dir(), NUMBER_LIST_FILE)
         if os.path.exists(sdcard_num_file):
             return sdcard_num_file
-    return NUMBER_LIST_FILE
+    # On PC: always the tool's own folder, never the current directory.
+    return os.path.join(get_base_storage_dir(), NUMBER_LIST_FILE)
 
 
 # Extract phone numbers from the best-matching column in an Excel file
@@ -164,7 +165,7 @@ def process_file_input():
     always_txt = file_cfg.get("always_use_txt", False)
     multi_excel = file_cfg.get("use_multiple_excel_files", False)
 
-    search_dir = get_base_storage_dir() if is_termux_or_mobile() else "."
+    search_dir = get_base_storage_dir()
 
     if always_txt:
         return _load_txt(search_dir)
