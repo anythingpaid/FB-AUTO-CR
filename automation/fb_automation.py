@@ -34,8 +34,43 @@ def read_lines(path):
         return [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
 
 
+def gemini_variations(reviews, needed, api_key):
+    """Use Gemini to expand few reviews into many unique variations."""
+    try:
+        import google.generativeai as genai
+    except ImportError:
+        print(f"{YELLOW}Installing google-generativeai...{WHITE}")
+        os.system(f"{sys.executable} -m pip install google-generativeai -q")
+        import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel("gemini-2.0-flash")
+
+    base = "\n".join([f"{i+1}. {r}" for i, r in enumerate(reviews)])
+    prompt = f"""You are a review writer. Given these sample reviews:
+{base}
+
+Generate {needed} UNIQUE review variations. Same positive meaning, different wording each time.
+Natural human tone, varied length (some short, some 2 sentences).
+Output ONLY the reviews, one per line, no numbering."""
+
+    resp = model.generate_content(prompt)
+    lines = [l.strip() for l in resp.text.strip().split("\n") if l.strip()]
+    # Clean numbering if present
+    cleaned = []
+    for l in lines:
+        import re
+        l = re.sub(r"^\d+[.\)]\s*", "", l)
+        if l:
+            cleaned.append(l)
+    return cleaned[:needed]
+
+
 def fb_login(context, page, cookie_str):
-    """Login to Facebook directly via saved cookies (safer than password)."""
+    """Login to Facebook directly via saved cookies (safer than password).
+    Returns True ONLY when the account is really logged in. A dead cookie
+    can land on a checkpoint or another non-login URL, so the URL alone
+    is not enough - also check that no login form is showing."""
     try:
         cookies = []
         for pair in cookie_str.split(";"):
@@ -58,9 +93,18 @@ def fb_login(context, page, cookie_str):
     page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30000)
     time.sleep(random.uniform(2.0, 3.0))
     try:
-        url = page.url
-        # Logged in = not on login page
-        return "login" not in url
+        url = page.url.lower()
+        # Login page or checkpoint = NOT logged in (dead/gated cookie)
+        if "login" in url or "checkpoint" in url:
+            return False
+        # A visible password field means the login form is showing
+        # (dead cookie) even when the URL looks like home.
+        try:
+            if page.locator('input[type="password"]').first.is_visible(timeout=3000):
+                return False
+        except Exception:
+            pass
+        return True
     except Exception:
         return False
 
@@ -259,14 +303,28 @@ def run_reviews_mode():
     except Exception:
         need = len(reviews)
 
-    # No generation of any kind: if more reviews are needed than
-    # available, post only the available ones - add more lines to
-    # reviews.txt for more.
+    # Gemini expands if needed > available
     if need > len(reviews):
-        print(f"{YELLOW}Need {need}, have {len(reviews)} - "
-              f"posting available reviews only{WHITE}")
-        need = len(reviews)
-    reviews = reviews[:need]
+        print(f"{CYAN}Need {need}, have {len(reviews)} - asking Gemini for variations...{WHITE}")
+        _key_file = os.path.join(get_base_storage_dir(), "gemini_api_key.txt")
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not api_key and os.path.exists(_key_file):
+            with open(_key_file) as _kf:
+                api_key = _kf.read().strip()
+        if not api_key:
+            api_key = input(f"{CYAN}Enter Gemini API Key (one time only): {WHITE}").strip()
+            if api_key:
+                with open(_key_file, "w") as _kf:
+                    _kf.write(api_key)
+                print(f"{GREEN}API key saved - won't ask again{WHITE}")
+        if api_key:
+            reviews = gemini_variations(reviews, need, api_key)
+            print(f"{GREEN}Gemini generated {len(reviews)} unique reviews{WHITE}")
+        else:
+            print(f"{YELLOW}No API key - using available reviews only{WHITE}")
+            need = len(reviews)
+    else:
+        reviews = reviews[:need]
 
     # Live input: paste page link in terminal (like custom password)
     page_url = input(f"{CYAN}Paste Facebook Page Link and press Enter: {WHITE}").strip()
@@ -276,8 +334,11 @@ def run_reviews_mode():
     print(f"{CYAN}Page: {page_url}{WHITE}")
     print(f"{CYAN}Accounts: {len(accounts)}, Reviews: {len(reviews)}{WHITE}")
 
-    # Pair accounts with reviews (one review per account)
-    test_pairs = list(zip(accounts, reviews))
+    # Queue: a review is consumed ONLY when actually posted.
+    # Already-reviewed / failed login / failed post leaves the review
+    # in the queue for the next working account.
+    queue = list(reviews)
+    total = len(queue)
 
     with sync_playwright() as p:
         _exe = os.path.expandvars(
@@ -291,32 +352,47 @@ def run_reviews_mode():
         if os.path.exists(_exe):
             _lk["executable_path"] = _exe
         browser = p.chromium.launch(**_lk)
+        # Added 2026-10-21: permanent proxies.txt support - auto-loads and
+        # rotates one proxy per account context; no file = direct (as before)
+        try:
+            from core.proxy_manager import apply_proxies_to_browser
+            apply_proxies_to_browser(browser, "Reviews")
+        except Exception:
+            pass
+
         done = 0
-        for acc_line, review in test_pairs:
+        for acc_line in accounts:
+            if not queue:
+                break  # every review posted
             parts = acc_line.split("|")
             uid = parts[0]
             cookie_str = parts[2] if len(parts) > 2 else ""
             if not cookie_str:
-                print(f"{RED}[Reviews] No cookies for {uid}, skipping{WHITE}")
+                print(f"{RED}[Reviews] No cookies for {uid}, skipping - review stays in queue{WHITE}")
                 continue
             print(f"\n{CYAN}--- Account: {uid} ---{WHITE}")
+            review = queue[0]
 
             context = browser.new_context()
             page = context.new_page()
 
             try:
                 if not fb_login(context, page, cookie_str):
-                    print(f"{RED}[Reviews] Cookie login failed for {uid}{WHITE}")
+                    print(f"{RED}[Reviews] Cookie login failed for {uid} - review stays in queue{WHITE}")
                     continue
                 print(f"{GREEN}[Reviews] Logged in via cookies: {uid}{WHITE}")
 
-                if submit_review(page, page_url, review):
+                result = submit_review(page, page_url, review)
+                if result is True:
                     print(f"{GREEN}[Reviews] Review submitted for {uid}{WHITE}")
+                    queue.pop(0)
                     done += 1
+                elif result == "already":
+                    print(f"{YELLOW}[Reviews] {uid} already reviewed - review stays in queue{WHITE}")
                 else:
-                    print(f"{RED}[Reviews] Review FAILED for {uid}{WHITE}")
+                    print(f"{RED}[Reviews] Review FAILED for {uid} - review stays in queue{WHITE}")
             except Exception as e:
-                print(f"{RED}[Reviews] Error for {uid}: {e}{WHITE}")
+                print(f"{RED}[Reviews] Error for {uid}: {e} - review stays in queue{WHITE}")
             finally:
                 try:
                     context.close()
@@ -326,7 +402,7 @@ def run_reviews_mode():
 
         browser.close()
         print(f"\n{CYAN}{'='*50}{WHITE}")
-        print(f"{GREEN}[Reviews] DONE: {done}/{len(test_pairs)} reviews submitted{WHITE}")
+        print(f"{GREEN}[Reviews] DONE: {done}/{total} reviews submitted{WHITE}")
         print(f"{CYAN}{'='*50}{WHITE}")
 
 
