@@ -4,6 +4,11 @@ __pycache__/
 output/*
 !output/.gitkeep
 !output/README.md
+!output/browser_accounts.txt
+!output/success.txt
+!output/cookies_output.txt
+!output/posted_reviews.txt
+!output/used_dp_pics.txt
 .vscode/
 .idea/
 proxies.txt
