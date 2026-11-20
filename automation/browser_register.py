@@ -86,7 +86,7 @@ def _human_type(page, selector, text, min_delay=80, max_delay=250):
         if _box:
             _hb_mouse_move(page, _box["x"] + _box["width"] / 2,
                            _box["y"] + _box["height"] / 2)
-            _hb_pause(0.1, 0.3)
+            _hb_pause(0.05, 0.15)
     except Exception:
         pass
     try:
@@ -115,7 +115,7 @@ def _select_birthday(page, day, month, year):
             _human_click(page, combo)
             listbox = page.get_by_role("listbox").first
             listbox.wait_for(state="visible", timeout=5000)
-            _human_click(page, page.get_by_role("option", name=opt_name, exact=use_exact))
+            page.get_by_role("option", name=opt_name, exact=use_exact).click()
             try:
                 listbox.wait_for(state="hidden", timeout=3000)
             except Exception:
@@ -149,7 +149,7 @@ def _select_gender(page, gender):
         _human_click(page, combo)
         listbox = page.get_by_role("listbox").first
         listbox.wait_for(state="visible", timeout=5000)
-        _human_click(page, page.get_by_role("option", name=opt, exact=True))
+        page.get_by_role("option", name=opt, exact=True).click()
         try:
             listbox.wait_for(state="hidden", timeout=3000)
         except Exception:
@@ -512,7 +512,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                 if _sbox:
                     _hb_mouse_move(page, _sbox["x"] + _sbox["width"] / 2,
                                    _sbox["y"] + _sbox["height"] / 2)
-                    _hb_pause(0.1, 0.3)
+                    _hb_pause(0.05, 0.15)
             except Exception:
                 pass
             try:

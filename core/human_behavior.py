@@ -68,9 +68,9 @@ def human_type(page_or_locator, text, make_typos=True):
                 pass
             time.sleep(random.uniform(0.1, 0.2))
         # Variable speed: slower at start/end of text
-        delay = random.uniform(0.05, 0.15)
+        delay = random.uniform(0.04, 0.10)
         if i == 0 or i == len(text) - 1:
-            delay += random.uniform(0.05, 0.15)
+            delay += random.uniform(0.03, 0.08)
         try:
             page_or_locator.type(char, delay=int(delay * 1000))
         except Exception:
