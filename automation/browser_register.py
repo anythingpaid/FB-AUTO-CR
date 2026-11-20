@@ -449,19 +449,74 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             counter.update("failed")
             return {"status": "failed", "number": phone_number, "reason": "form not loaded"}
 
-        # Fill by position (was working): 3 text inputs + 1 password
-        # Variable order: humans don't always fill top-to-bottom (30% shuffled)
+        # Wait for the form to be interactive (hydrated), not just
+        # present in the SSR HTML - filling before React hydrates
+        # gets the values wiped on the first re-render.
+        try:
+            page.get_by_role("button", name="Submit", exact=True).wait_for(state="visible", timeout=15000)
+        except Exception:
+            pass
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+
+        # Fill by accessible name (the 2025-2026 form order is
+        # Name -> Birthday -> Gender -> Mobile -> Password, so
+        # nth-index filling is fragile). Each field falls back to
+        # its text-input position only if the name lookup finds
+        # nothing. Typing stays real per-character keystrokes.
         text_inputs = page.locator('input[type="text"]')
         pwd_inputs = page.locator('input[type="password"]')
-        _fill_plan = [(0, first_name), (1, last_name), (2, phone_number)]
+
+        def _field(role_name, nth_idx, is_pwd=False):
+            try:
+                loc = page.get_by_role("textbox", name=role_name)
+                if loc.count() > 0:
+                    return loc.first
+            except Exception:
+                pass
+            return (pwd_inputs if is_pwd else text_inputs).nth(nth_idx)
+
+        _fill_plan = [
+            ("First name", 0, first_name, False),
+            ("Surname", 1, last_name, False),
+            ("Mobile number or email", 2, phone_number, False),
+        ]
         if random.random() < 0.3:
             random.shuffle(_fill_plan)
-        for _idx, _val in _fill_plan:
-            _human_type(page, text_inputs.nth(_idx), _val)
+        for _rname, _idx, _val, _is_pwd in _fill_plan:
+            _loc = _field(_rname, _idx, _is_pwd)
+            _human_type(page, _loc, _val)
+            # Survive-blur check: the value must still be there
+            # after Tab (React state took it, not wiped).
+            try:
+                page.keyboard.press("Tab")
+                _human_pause(0.3, 0.6)
+                if _loc.input_value() != _val:
+                    try:
+                        _loc.fill("")
+                    except Exception:
+                        pass
+                    _human_type(page, _loc, _val)
+            except Exception:
+                pass
             # Random thinking pause between fields (human-like hesitation)
             if random.random() < 0.4:
                 time.sleep(random.uniform(1.0, 2.5))
-        _human_type(page, pwd_inputs.nth(0), password)
+        _pwd_loc = _field("Password", 0, True)
+        _human_type(page, _pwd_loc, password)
+        try:
+            page.keyboard.press("Tab")
+            _human_pause(0.3, 0.6)
+            if _pwd_loc.input_value() != password:
+                try:
+                    _pwd_loc.fill("")
+                except Exception:
+                    pass
+                _human_type(page, _pwd_loc, password)
+        except Exception:
+            pass
 
         # Select birthday
         dob_ok = _select_birthday(page, birth_date.day, birth_month, birth_date.year)
@@ -494,9 +549,37 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
         with print_lock:
             print(f"{YELLOW}[Browser] Submitting form...{WHITE}")
         submitted = False
+        # Log registration POST responses so a failure shows
+        # whether the request fired (server hold) or not
+        # (client-side state problem).
+        _reg_responses = []
+        def _on_response(resp):
+            try:
+                u = resp.url
+                if "facebook.com" in u and ("/reg" in u or "r.php" in u or "registration" in u):
+                    _reg_responses.append(f"{resp.status} {u[:80]}")
+            except Exception:
+                pass
+        try:
+            page.on("response", _on_response)
+        except Exception:
+            pass
         try:
             btn = page.get_by_role("button", name="Submit", exact=True)
             btn.wait_for(state="visible", timeout=10000)
+            # Ensure no combobox listbox is still open - a Submit
+            # click while one is open just dismisses it.
+            try:
+                page.get_by_role("listbox").wait_for(state="hidden", timeout=2000)
+            except Exception:
+                pass
+            # Scroll the button into view (page scroll + element
+            # scroll) so the real click lands on it.
+            try:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            except Exception:
+                pass
+            _human_pause(0.3, 0.6)
             btn.scroll_into_view_if_needed(timeout=5000)
             _human_pause(0.5, 1.0)
             try:
@@ -627,6 +710,27 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                     errors = ["page navigating"]
                 with print_lock:
                     print(f"{RED}[Browser] Still on reg page. Errors: {errors}{WHITE}")
+                    print(f"{RED}[Browser] Reg responses: {_reg_responses}{WHITE}")
+                # Facebook's errors for this form do not reliably
+                # emit [role=alert]/aria-invalid, so also dump the
+                # combobox texts, field values and any visible
+                # error text - this separates a client-side state
+                # problem (values missing) from a server hold
+                # (values present, generic error / spinner).
+                try:
+                    diag = page.evaluate("""() => {
+                        const combos = Array.from(document.querySelectorAll('[role="combobox"]')).map(c => (c.innerText || '').trim());
+                        const texts = Array.from(document.querySelectorAll('input[type="text"]')).map(i => i.value);
+                        const body = (document.body.innerText || '').slice(0, 4000);
+                        const errLines = body.split('\\n').map(s => s.trim()).filter(s => /error|try again|can't be used|cannot be used|invalid|already/i.test(s)).slice(0, 5);
+                        return {combos: combos, texts: texts, errLines: errLines};
+                    }""")
+                    with print_lock:
+                        print(f"{RED}[Browser] Comboboxes: {diag['combos']}{WHITE}")
+                        print(f"{RED}[Browser] Text values: {diag['texts']}{WHITE}")
+                        print(f"{RED}[Browser] Page error text: {diag['errLines']}{WHITE}")
+                except Exception:
+                    pass
                 # Check aria-invalid on all inputs
                 try:
                     invalids = page.evaluate("""() => {
