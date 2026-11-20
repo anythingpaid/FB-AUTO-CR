@@ -66,24 +66,104 @@ Output ONLY the reviews, one per line, no numbering."""
     return cleaned[:needed]
 
 
+def _parse_cookies_any(raw, default_domain=".facebook.com"):
+    """Parse cookies in ANY common format into Playwright cookie dicts.
+
+    Handles: JSON array/dict (browser-extension exports like
+    EditThisCookie / Cookie-Editor), Netscape cookies.txt
+    (tab-separated), and name=value text separated by ';', '|'
+    or newlines (with an optional leading 'Cookie:' label).
+    Set-Cookie attribute pairs (expires/path/domain/...) are
+    skipped. Returns a list of {name, value, domain, path}."""
+    import json as _json
+    raw = (raw or "").strip()
+    if raw.lower().startswith("cookie:"):
+        raw = raw[len("cookie:"):].strip()
+    if not raw:
+        return []
+    out = []
+    seen = set()
+    _skip = {"expires", "max-age", "path", "domain", "secure",
+             "httponly", "samesite", "version", "comment"}
+
+    def _add(name, value, domain=None, path="/"):
+        name = str(name or "").strip().strip('"').strip("'")
+        value = str(value or "").strip().strip('"').strip("'")
+        if not name or name.lower() in _skip:
+            return
+        dom = str(domain or default_domain).strip() or default_domain
+        key = (name, dom)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"name": name, "value": value,
+                    "domain": dom, "path": path or "/"})
+
+    # 1) JSON: array of cookie objects, single object, or name->value map
+    if raw[:1] in ("[", "{"):
+        try:
+            data = _json.loads(raw)
+            if isinstance(data, dict):
+                if any(str(k).lower() in ("name", "value") for k in data):
+                    data = [data]
+                else:
+                    for k, v in data.items():
+                        _add(k, v)
+                    return out
+            if isinstance(data, list):
+                for c in data:
+                    if not isinstance(c, dict):
+                        continue
+                    low = {str(k).lower(): v for k, v in c.items()}
+                    _add(low.get("name"), low.get("value"),
+                         low.get("domain") or low.get("host"),
+                         low.get("path", "/"))
+                return out
+        except Exception:
+            pass
+
+    # 2) Netscape cookies.txt: tab-separated, >=7 fields per line
+    lines = [ln for ln in raw.splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    if lines and all("\t" in ln for ln in lines):
+        rows = []
+        ok = True
+        for ln in lines:
+            parts = ln.split("\t")
+            if len(parts) < 7:
+                ok = False
+                break
+            rows.append((parts[5], parts[6], parts[0], parts[2]))
+        if ok:
+            for nm, val, dom, pth in rows:
+                _add(nm, val, dom, pth)
+            return out
+
+    # 3) name=value text separated by ';', '|' or newlines
+    text = raw.replace("\r", "\n").replace("|", ";").replace("\n", ";")
+    for chunk in text.split(";"):
+        chunk = chunk.strip()
+        if not chunk or "=" not in chunk:
+            continue
+        name, value = chunk.split("=", 1)
+        _add(name, value)
+    return out
+
+
 def fb_login(context, page, cookie_str):
     """Login to Facebook directly via saved cookies (safer than password).
+    Accepts cookies in any common format (see _parse_cookies_any).
     Returns True ONLY when the account is really logged in. A dead cookie
     can land on a checkpoint or another non-login URL, so the URL alone
-    is not enough - also check that no login form is showing."""
+    is not enough - also check that no login form is showing. The
+    failure reason is printed so a dead cookie is distinguishable
+    from a checkpoint."""
     try:
-        cookies = []
-        for pair in cookie_str.split(";"):
-            pair = pair.strip()
-            if "=" not in pair:
-                continue
-            name, value = pair.split("=", 1)
-            cookies.append({
-                "name": name.strip(),
-                "value": value.strip(),
-                "domain": ".facebook.com",
-                "path": "/",
-            })
+        cookies = _parse_cookies_any(cookie_str)
+        if not cookies:
+            with print_lock:
+                print(f"{RED}[Reviews] No usable cookies parsed{WHITE}")
+            return False
         context.add_cookies(cookies)
     except Exception as e:
         with print_lock:
@@ -95,12 +175,20 @@ def fb_login(context, page, cookie_str):
     try:
         url = page.url.lower()
         # Login page or checkpoint = NOT logged in (dead/gated cookie)
-        if "login" in url or "checkpoint" in url:
+        if "checkpoint" in url:
+            with print_lock:
+                print(f"{YELLOW}[Reviews] Cookie -> checkpoint page{WHITE}")
+            return False
+        if "login" in url:
+            with print_lock:
+                print(f"{YELLOW}[Reviews] Cookie -> login page (dead cookie){WHITE}")
             return False
         # A visible password field means the login form is showing
         # (dead cookie) even when the URL looks like home.
         try:
             if page.locator('input[type="password"]').first.is_visible(timeout=3000):
+                with print_lock:
+                    print(f"{YELLOW}[Reviews] Cookie -> login form showing (dead cookie){WHITE}")
                 return False
         except Exception:
             pass
@@ -297,11 +385,8 @@ def run_reviews_mode():
         print(f"{RED}No reviews in reviews.txt - paste client list there{WHITE}")
         return
 
-    # Ask how many reviews needed
-    try:
-        need = int(input(f"{CYAN}How many reviews needed? {WHITE}").strip())
-    except Exception:
-        need = len(reviews)
+    # Use every review in the file - no prompt.
+    need = len(reviews)
 
     # Gemini expands if needed > available
     if need > len(reviews):
@@ -352,13 +437,6 @@ def run_reviews_mode():
         if os.path.exists(_exe):
             _lk["executable_path"] = _exe
         browser = p.chromium.launch(**_lk)
-        # Added 2026-10-21: permanent proxies.txt support - auto-loads and
-        # rotates one proxy per account context; no file = direct (as before)
-        try:
-            from core.proxy_manager import apply_proxies_to_browser
-            apply_proxies_to_browser(browser, "Reviews")
-        except Exception:
-            pass
 
         done = 0
         for acc_line in accounts:
@@ -437,17 +515,8 @@ def run_dp_feedback_mode():
     if not reviews:
         print(f"{RED}No reviews in reviews.txt - paste client list there{WHITE}")
         return
-    try:
-        need = int(input(f"{CYAN}How many reviews needed? {WHITE}").strip())
-    except Exception:
-        need = len(reviews)
-    # No generation of any kind: if more reviews are needed than
-    # available, post only the available ones - add more lines to
-    # reviews.txt for more.
-    if need > len(reviews):
-        print(f"{YELLOW}Need {need}, have {len(reviews)} - "
-              f"posting available reviews only{WHITE}")
-        need = len(reviews)
+    # Use every review in the file - no prompt.
+    need = len(reviews)
     reviews = reviews[:need]
     try:
         gap = int(input(
