@@ -187,7 +187,7 @@ def _click_resend_twice(page):
                 btn.click()
                 with print_lock:
                     print(f"{CYAN}[Browser] Expander clicked to reveal resend{WHITE}")
-                _human_pause(1.0, 2.0)
+                _human_pause(0.3, 0.6)
                 break
         except Exception:
             continue
@@ -214,7 +214,7 @@ def _click_resend_twice(page):
                     clicked += 1
                     with print_lock:
                         print(f"{CYAN}[Browser] Resend clicked ({clicked}/3){WHITE}")
-                    time.sleep(random.uniform(1.0, 2.5))  # Human pause between resends
+                    time.sleep(random.uniform(0.5, 1.0))  # Short pause between resends
                     break
             except Exception:
                 continue
@@ -262,7 +262,7 @@ def _find_continue_button(page, timeout_s=12):
         time.sleep(0.5)
 
 
-def _fetch_otp_from_url(page, sms_url, timeout=20, interval=1):
+def _fetch_otp_from_url(page, sms_url, timeout=20, interval=2):
     """
     Fetch OTP via HTTP requests (simple API endpoint).
     Response is plain text; 'no' prefix means no OTP yet.
@@ -594,7 +594,6 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
         # Facebook sets it while the page is still on /reg, and
         # trusting it made the check below fail the account and
         # exit before the OTP page even rendered.
-        _human_pause(2.0, 3.0)
         for _ in range(12):
             try:
                 _u = page.url.lower()
@@ -734,8 +733,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
         if on_confirm_page or "code" in page_content or "confirm" in page_content or "otp" in page_content:
             code = None
 
-            # Wait for OTP page to fully load, then click resend 3x to trigger OTP
-            _human_pause(2.0, 3.0)
+            # OTP page is loaded - click resend 3x right away to trigger OTP
             resend_count = _click_resend_twice(page)
             if resend_count == 0:
                 with print_lock:
