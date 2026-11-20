@@ -168,7 +168,7 @@ def _parse_number_entry(entry):
 
 
 def _click_resend_twice(page):
-    """Click resend code button 3 times back-to-back (triggers OTP delivery)."""
+    """Click the resend code button ONCE (triggers OTP delivery)."""
     # First: click the expander below Continue to reveal resend option
     expander_selectors = [
         'button:has-text("Didn\'t get the code")',
@@ -183,7 +183,7 @@ def _click_resend_twice(page):
     for sel in expander_selectors:
         try:
             btn = page.locator(sel).first
-            if btn.count() > 0 and btn.is_visible(timeout=500):
+            if btn.count() > 0 and btn.is_visible(timeout=100):
                 btn.click()
                 with print_lock:
                     print(f"{CYAN}[Browser] Expander clicked to reveal resend{WHITE}")
@@ -204,23 +204,20 @@ def _click_resend_twice(page):
         'button:has-text("Resend code")',
         'a:has-text("Resend code")',
     ]
-    clicked = 0
-    for attempt in range(3):
+    # Poll briefly for the resend button to appear, click it ONCE.
+    for _ in range(10):  # up to ~2s for it to appear
         for sel in resend_selectors:
             try:
                 btn = page.locator(sel).first
-                if btn.count() > 0 and btn.is_visible(timeout=500):
+                if btn.count() > 0 and btn.is_visible(timeout=100):
                     btn.click()
-                    clicked += 1
                     with print_lock:
-                        print(f"{CYAN}[Browser] Resend clicked ({clicked}/3){WHITE}")
-                    time.sleep(random.uniform(0.5, 1.0))  # Short pause between resends
-                    break
+                        print(f"{CYAN}[Browser] Resend clicked{WHITE}")
+                    return 1
             except Exception:
                 continue
-        if clicked >= 3:
-            break
-    return clicked
+        time.sleep(0.2)
+    return 0
 
 
 def _find_continue_button(page, timeout_s=12):
@@ -274,7 +271,7 @@ def _fetch_otp_from_url(page, sms_url, timeout=20, interval=2):
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            r = requests.get(sms_url, timeout=15)
+            r = requests.get(sms_url, timeout=5)
             text = r.text.strip()
             if text and not text.lower().startswith("no"):
                 # Facebook codes are 5 digits. Try the pipe
@@ -733,7 +730,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
         if on_confirm_page or "code" in page_content or "confirm" in page_content or "otp" in page_content:
             code = None
 
-            # OTP page is loaded - click resend 3x right away to trigger OTP
+            # OTP page is loaded - click resend once right away to trigger OTP
             resend_count = _click_resend_twice(page)
             if resend_count == 0:
                 with print_lock:
@@ -773,7 +770,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                     code_field = page.get_by_label("Confirmation code", exact=True)
                     code_field.wait_for(state="visible", timeout=15000)
                     code_field.fill(code)  # No click - overlay intercepts pointer events
-                    _human_pause(1.0, 2.0)
+                    _human_pause(1.0, 1.0)
                     # Click Confirm, handle navigation as success
                     # After OTP fill, click Continue -> profile opens automatically
                     try:
