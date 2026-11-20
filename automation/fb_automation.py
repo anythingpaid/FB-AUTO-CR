@@ -455,10 +455,34 @@ def run_reviews_mode():
             page = context.new_page()
 
             try:
-                if not fb_login(context, page, cookie_str):
-                    print(f"{RED}[Reviews] Cookie login failed for {uid} - review stays in queue{WHITE}")
+                logged_in = fb_login(context, page, cookie_str)
+                if not logged_in:
+                    # Cookie dead -> UID+password fallback in the
+                    # SAME open browser/page.
+                    _pwd = parts[1] if len(parts) > 1 else ""
+                    if _pwd:
+                        print(f"{YELLOW}[Reviews] Cookie failed for {uid} - trying password login{WHITE}")
+                        try:
+                            from automation.dp_apply import password_login
+                            _st = password_login(page, uid, _pwd)
+                            if _st == "checkpoint":
+                                print(f"{RED}[Reviews] {uid} checkpoint on password login - skipping{WHITE}")
+                            elif _st == "captcha-unavailable":
+                                print(f"{YELLOW}[Reviews] {uid} check appeared - solve in browser, skipping{WHITE}")
+                            else:
+                                try:
+                                    _cks = context.cookies()
+                                    _has_cu = any(c["name"] == "c_user" and c["value"] for c in _cks)
+                                    _u = page.url.lower()
+                                    logged_in = _has_cu and "login" not in _u and "checkpoint" not in _u
+                                except Exception:
+                                    logged_in = False
+                        except Exception as e:
+                            print(f"{RED}[Reviews] Password login error for {uid}: {e}{WHITE}")
+                if not logged_in:
+                    print(f"{RED}[Reviews] Login failed for {uid} - review stays in queue{WHITE}")
                     continue
-                print(f"{GREEN}[Reviews] Logged in via cookies: {uid}{WHITE}")
+                print(f"{GREEN}[Reviews] Logged in: {uid}{WHITE}")
 
                 result = submit_review(page, page_url, review)
                 if result is True:
@@ -571,10 +595,25 @@ def run_dp_feedback_mode():
                     continue
                 _human_pause(1.0, 2.0)
                 if not _is_logged_in(page, context):
-                    print(f"{RED}[Reviews] Cookie login failed for {uid} "
-                          f"- review stays in queue{WHITE}")
-                    continue
-                print(f"{GREEN}[Reviews] Logged in via cookies: {uid}{WHITE}")
+                    # Cookie dead -> UID+password fallback in the
+                    # SAME open browser/page.
+                    _pwd = parts[1] if len(parts) > 1 else ""
+                    _ok = False
+                    if _pwd:
+                        print(f"{YELLOW}[Reviews] Cookie failed for {uid} - trying password login{WHITE}")
+                        try:
+                            from automation.dp_apply import password_login
+                            _st = password_login(page, uid, _pwd)
+                            if _st == "submitted" and _goto_profile(page, FB_PROFILE_URL.format(uid=uid)):
+                                _human_pause(1.0, 2.0)
+                                _ok = _is_logged_in(page, context)
+                        except Exception as e:
+                            print(f"{RED}[Reviews] Password login error for {uid}: {e}{WHITE}")
+                    if not _ok:
+                        print(f"{RED}[Reviews] Login failed for {uid} "
+                              f"- review stays in queue{WHITE}")
+                        continue
+                print(f"{GREEN}[Reviews] Logged in: {uid}{WHITE}")
                 # DP first (same verified steps as dp_apply.process_account)
                 name = read_profile_name(page)
                 if not _wait_for_pic(page):
