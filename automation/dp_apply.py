@@ -77,29 +77,87 @@ def parse_accounts_file(path):
 
 
 def parse_cookie_string(raw, domain):
-    """Accept JSON cookie list/dict, or 'name=value; name2=value2' text."""
-    import json
+    """Parse cookies in ANY common format into Playwright cookie dicts.
+
+    Handles: JSON array/dict (browser-extension exports like
+    EditThisCookie / Cookie-Editor), Netscape cookies.txt
+    (tab-separated), and name=value text separated by ';', '|'
+    or newlines (with an optional leading 'Cookie:' label).
+    Set-Cookie attribute pairs (expires/path/domain/...) are
+    skipped. Returns a list of {name, value, domain, path}."""
+    import json as _json
     raw = (raw or "").strip()
+    if raw.lower().startswith("cookie:"):
+        raw = raw[len("cookie:"):].strip()
     if not raw:
         return []
-    if raw.startswith("[") or raw.startswith("{"):
-        try:
-            data = json.loads(raw)
-            if isinstance(data, dict):
-                data = [data]
-            return [{"name": c["name"], "value": c["value"],
-                     "domain": c.get("domain", domain),
-                     "path": c.get("path", "/")} for c in data]
-        except Exception:
-            return []
+    default_domain = domain or ".facebook.com"
     out = []
-    for chunk in raw.split(";"):
+    seen = set()
+    _skip = {"expires", "max-age", "path", "domain", "secure",
+             "httponly", "samesite", "version", "comment"}
+
+    def _add(name, value, dom=None, path="/"):
+        name = str(name or "").strip().strip('"').strip("'")
+        value = str(value or "").strip().strip('"').strip("'")
+        if not name or name.lower() in _skip:
+            return
+        d = str(dom or default_domain).strip() or default_domain
+        key = (name, d)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"name": name, "value": value,
+                    "domain": d, "path": path or "/"})
+
+    # 1) JSON: array of cookie objects, single object, or name->value map
+    if raw[:1] in ("[", "{"):
+        try:
+            data = _json.loads(raw)
+            if isinstance(data, dict):
+                if any(str(k).lower() in ("name", "value") for k in data):
+                    data = [data]
+                else:
+                    for k, v in data.items():
+                        _add(k, v)
+                    return out
+            if isinstance(data, list):
+                for c in data:
+                    if not isinstance(c, dict):
+                        continue
+                    low = {str(k).lower(): v for k, v in c.items()}
+                    _add(low.get("name"), low.get("value"),
+                         low.get("domain") or low.get("host"),
+                         low.get("path", "/"))
+                return out
+        except Exception:
+            pass
+
+    # 2) Netscape cookies.txt: tab-separated, >=7 fields per line
+    lines = [ln for ln in raw.splitlines()
+             if ln.strip() and not ln.strip().startswith("#")]
+    if lines and all("\t" in ln for ln in lines):
+        rows = []
+        ok = True
+        for ln in lines:
+            parts = ln.split("\t")
+            if len(parts) < 7:
+                ok = False
+                break
+            rows.append((parts[5], parts[6], parts[0], parts[2]))
+        if ok:
+            for nm, val, dom, pth in rows:
+                _add(nm, val, dom, pth)
+            return out
+
+    # 3) name=value text separated by ';', '|' or newlines
+    text = raw.replace("\r", "\n").replace("|", ";").replace("\n", ";")
+    for chunk in text.split(";"):
         chunk = chunk.strip()
         if not chunk or "=" not in chunk:
             continue
         name, value = chunk.split("=", 1)
-        out.append({"name": name.strip(), "value": value.strip(),
-                    "domain": domain, "path": "/"})
+        _add(name, value)
     return out
 
 
