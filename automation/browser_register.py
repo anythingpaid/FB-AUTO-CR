@@ -506,59 +506,64 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                 with print_lock:
                     print(f"{YELLOW}[Browser] Normal click failed, trying JS click{WHITE}")
                 btn.evaluate("el => el.click()")
-            # Wait for navigation after submit
+            # Fast success check: poll briefly for real submit
+            # signals (URL left reg, confirm/checkpoint URL, code
+            # field appeared, or the reg form is gone). The moment
+            # one shows, the submit worked - no retry, no long wait.
+            def _submit_done():
+                try:
+                    _u = page.url.lower()
+                    if "/reg" not in _u and "/r.php" not in _u:
+                        return True
+                    if "confirm" in _u or "checkpoint" in _u:
+                        return True
+                    if page.get_by_label("Confirmation code", exact=True).count() > 0:
+                        return True
+                    if page.get_by_role("button", name="Submit", exact=True).count() == 0:
+                        return True
+                except Exception:
+                    pass
+                return False
+
             navigated = False
-            try:
-                page.wait_for_url(lambda url: "/r.php" not in url and "/reg" not in url, timeout=10000)
-                navigated = True
-            except Exception:
-                pass
+            for _ in range(16):  # up to ~8s, exits the moment it submits
+                if _submit_done():
+                    navigated = True
+                    break
+                time.sleep(0.5)
             if not navigated:
                 # Retry once: scroll to Submit and click it again.
                 with print_lock:
-                    print(f"{YELLOW}[Browser] Submit didn't navigate, retrying Submit click{WHITE}")
+                    print(f"{YELLOW}[Browser] Submit didn't go through, retrying Submit click{WHITE}")
                 try:
                     btn.scroll_into_view_if_needed(timeout=5000)
                     _human_pause(0.5, 1.0)
                     btn.click(timeout=10000)
-                    page.wait_for_url(lambda url: "/r.php" not in url and "/reg" not in url, timeout=10000)
-                    navigated = True
+                    for _ in range(16):
+                        if _submit_done():
+                            navigated = True
+                            break
+                        time.sleep(0.5)
                 except Exception:
                     pass
             if not navigated:
                 # Fallback: press Enter on password field
                 with print_lock:
-                    print(f"{YELLOW}[Browser] Still no navigation, trying Enter key{WHITE}")
+                    print(f"{YELLOW}[Browser] Still no submit, trying Enter key{WHITE}")
                 try:
                     pwd_inputs.nth(0).click()
                     _human_pause(0.3, 0.6)
                     page.keyboard.press("Enter")
-                    page.wait_for_url(lambda url: "/r.php" not in url and "/reg" not in url, timeout=10000)
-                    navigated = True
+                    for _ in range(16):
+                        if _submit_done():
+                            navigated = True
+                            break
+                        time.sleep(0.5)
                 except Exception:
                     pass
-            # Final networkidle wait
-            try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
             submitted = True
             with print_lock:
                 print(f"{GREEN}[Browser] Submit done (navigated: {navigated}){WHITE}")
-            # Smart wait: proceed as soon as OTP page/input appears (max 8s)
-            _otp_ready = False
-            for _ in range(16):
-                try:
-                    _url = page.url.lower()
-                    if "confirm" in _url or "checkpoint" in _url or "otp" in _url:
-                        _otp_ready = True
-                        break
-                    if page.get_by_label("Confirmation code", exact=True).count() > 0:
-                        _otp_ready = True
-                        break
-                except Exception:
-                    pass
-                time.sleep(0.5)
             time.sleep(random.uniform(0.8, 2.0))  # Human settle after OTP page
         except Exception as e:
             with print_lock:
