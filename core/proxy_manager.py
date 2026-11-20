@@ -190,6 +190,8 @@ def _format_proxy_config_label(proxy_list, source="User"):
 
 # Main proxy input handler - loads from settings or prompts user
 def get_proxy_list(config_state=None, render_callback=None):
+    # Proxy support removed - always direct connection.
+    return []
     settings = load_settings()
     proxy_cfg = settings.get("proxy_settings", {})
     ask_proxy = proxy_cfg.get("ask_for_proxy", True)
@@ -387,6 +389,8 @@ def load_proxies_from_file(filepath=None, verbose=True):
     with real valid proxy lines is used; template / comment-only
     files are skipped automatically.
     """
+    # Proxy support removed - always direct connection.
+    return []
     searched = _proxy_file_candidates(filepath)
     for cand in searched:
         if not os.path.exists(cand):
@@ -471,6 +475,8 @@ def format_proxy_for_requests(proxy_data):
 # problem (no file, patch unsupported, test context fails) leaves the
 # browser exactly as it was (direct connection, original behavior).
 def apply_proxies_to_browser(browser, label="Browser"):
+    # Proxy support removed - always direct connection.
+    return 0
     try:
         proxy_data_list = load_proxies_from_file()
         if not proxy_data_list:
