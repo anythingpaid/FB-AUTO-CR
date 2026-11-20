@@ -91,49 +91,32 @@ def _human_type(page, selector, text, min_delay=80, max_delay=250):
 
 def _select_birthday(page, day, month, year):
     """Select birthday via custom comboboxes (click combobox, then option).
-
-    Facebook's DOB comboboxes are custom widgets: clicking one
-    mounts a role=listbox in a portal at the end of <body>. The
-    reliable pattern is: click combobox -> wait for the listbox
-    to be visible (searched from page, not the form) -> real
-    click on the option -> wait for the listbox to hide -> verify
-    the combobox now shows the chosen value. Names are matched
-    case-insensitively (live names are "Select Month/Day/Year";
-    exact=True would break on capitalization). No Escape press -
-    it dismisses without committing.
-    """
+    Clicking a combobox mounts a role=listbox in a portal at the end
+    of <body>: click combobox -> wait listbox visible -> real click
+    on the option -> wait listbox hidden. Names matched
+    case-insensitively. No Escape (it dismisses without committing)."""
     ok = True
     for combo_name, opt_name, use_exact in [
         ("Select month", month, False),
         ("Select day", str(day), True),
         ("Select year", str(year), True),
     ]:
-        selected = False
-        for _try in range(2):
+        try:
+            combo = page.get_by_role("combobox", name=combo_name)
+            combo.click()
+            listbox = page.get_by_role("listbox").first
+            listbox.wait_for(state="visible", timeout=5000)
+            page.get_by_role("option", name=opt_name, exact=use_exact).click()
             try:
-                combo = page.get_by_role("combobox", name=combo_name)
-                combo.click()
-                listbox = page.get_by_role("listbox").first
-                listbox.wait_for(state="visible", timeout=5000)
-                page.get_by_role("option", name=opt_name, exact=use_exact).click()
-                try:
-                    listbox.wait_for(state="hidden", timeout=3000)
-                except Exception:
-                    pass
-                shown = combo.inner_text().strip()
-                if shown and opt_name.lower() in shown.lower():
-                    selected = True
-                    break
-                with print_lock:
-                    print(f"{YELLOW}[Browser] Birthday {combo_name} not verified (shows {shown!r}), retrying{WHITE}")
-            except Exception as e:
-                with print_lock:
-                    print(f"{RED}[Browser] Birthday {combo_name} FAILED: {e}{WHITE}")
-        if selected:
+                listbox.wait_for(state="hidden", timeout=3000)
+            except Exception:
+                pass
             with print_lock:
-                print(f"{GREEN}[Browser] Birthday {combo_name} -> {opt_name} (verified){WHITE}")
-        else:
+                print(f"{GREEN}[Browser] Birthday {combo_name} -> {opt_name}{WHITE}")
+        except Exception as e:
             ok = False
+            with print_lock:
+                print(f"{RED}[Browser] Birthday {combo_name} FAILED: {e}{WHITE}")
         _human_pause(0.5, 1.0)
     return ok
 
@@ -142,42 +125,32 @@ def _select_gender(page, gender):
     """Select gender via combobox (options: Female/Male/Custom)."""
     opt = "Female" if gender.lower() == "female" else "Male"
     ok = False
-    for _try in range(2):
+    try:
+        # The gender combobox has NO accessible name on the current
+        # form - "Select your gender" is only its placeholder text -
+        # so locate it by that visible text; 4th combobox as fallback.
+        combo = page.locator('[role="combobox"]:has-text("Select your gender")').first
         try:
-            # The gender combobox has NO accessible name on the
-            # current form - "Select your gender" is only its
-            # placeholder text - so a by-name lookup can never
-            # match and just burns its full timeout. Locate it by
-            # that visible text instead (verified on the live
-            # form); the 4th combobox stays as a last resort.
-            combo = page.locator('[role="combobox"]:has-text("Select your gender")').first
-            try:
-                combo.wait_for(timeout=3000)
-            except Exception:
-                with print_lock:
-                    print(f"{YELLOW}[Browser] Gender by text not found, trying 4th combobox{WHITE}")
-                combo = page.get_by_role("combobox").nth(3)
-                combo.wait_for(timeout=5000)
-            combo.click()
-            listbox = page.get_by_role("listbox").first
-            listbox.wait_for(state="visible", timeout=5000)
-            page.get_by_role("option", name=opt, exact=True).click()
-            try:
-                listbox.wait_for(state="hidden", timeout=3000)
-            except Exception:
-                pass
-            # Verify selection (no Escape: it can revert the value)
-            combo_text = combo.inner_text()
-            if opt.lower() in combo_text.lower():
-                with print_lock:
-                    print(f"{GREEN}[Browser] Gender -> {opt} (verified){WHITE}")
-                ok = True
-                break
+            combo.wait_for(timeout=3000)
+        except Exception:
             with print_lock:
-                print(f"{YELLOW}[Browser] Gender not verified (shows {combo_text!r}), retrying{WHITE}")
-        except Exception as e:
-            with print_lock:
-                print(f"{RED}[Browser] Gender FAILED: {e}{WHITE}")
+                print(f"{YELLOW}[Browser] Gender by text not found, trying 4th combobox{WHITE}")
+            combo = page.get_by_role("combobox").nth(3)
+            combo.wait_for(timeout=5000)
+        combo.click()
+        listbox = page.get_by_role("listbox").first
+        listbox.wait_for(state="visible", timeout=5000)
+        page.get_by_role("option", name=opt, exact=True).click()
+        try:
+            listbox.wait_for(state="hidden", timeout=3000)
+        except Exception:
+            pass
+        with print_lock:
+            print(f"{GREEN}[Browser] Gender -> {opt}{WHITE}")
+        ok = True
+    except Exception as e:
+        with print_lock:
+            print(f"{RED}[Browser] Gender FAILED: {e}{WHITE}")
     _human_pause(0.5, 1.0)
     return ok
 
@@ -449,74 +422,19 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             counter.update("failed")
             return {"status": "failed", "number": phone_number, "reason": "form not loaded"}
 
-        # Wait for the form to be interactive (hydrated), not just
-        # present in the SSR HTML - filling before React hydrates
-        # gets the values wiped on the first re-render.
-        try:
-            page.get_by_role("button", name="Submit", exact=True).wait_for(state="visible", timeout=15000)
-        except Exception:
-            pass
-        try:
-            page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-
-        # Fill by accessible name (the 2025-2026 form order is
-        # Name -> Birthday -> Gender -> Mobile -> Password, so
-        # nth-index filling is fragile). Each field falls back to
-        # its text-input position only if the name lookup finds
-        # nothing. Typing stays real per-character keystrokes.
+        # Fill by position: 3 text inputs + 1 password
+        # Variable order: humans don't always fill top-to-bottom (30% shuffled)
         text_inputs = page.locator('input[type="text"]')
         pwd_inputs = page.locator('input[type="password"]')
-
-        def _field(role_name, nth_idx, is_pwd=False):
-            try:
-                loc = page.get_by_role("textbox", name=role_name)
-                if loc.count() > 0:
-                    return loc.first
-            except Exception:
-                pass
-            return (pwd_inputs if is_pwd else text_inputs).nth(nth_idx)
-
-        _fill_plan = [
-            ("First name", 0, first_name, False),
-            ("Surname", 1, last_name, False),
-            ("Mobile number or email", 2, phone_number, False),
-        ]
+        _fill_plan = [(0, first_name), (1, last_name), (2, phone_number)]
         if random.random() < 0.3:
             random.shuffle(_fill_plan)
-        for _rname, _idx, _val, _is_pwd in _fill_plan:
-            _loc = _field(_rname, _idx, _is_pwd)
-            _human_type(page, _loc, _val)
-            # Survive-blur check: the value must still be there
-            # after Tab (React state took it, not wiped).
-            try:
-                page.keyboard.press("Tab")
-                _human_pause(0.3, 0.6)
-                if _loc.input_value() != _val:
-                    try:
-                        _loc.fill("")
-                    except Exception:
-                        pass
-                    _human_type(page, _loc, _val)
-            except Exception:
-                pass
+        for _idx, _val in _fill_plan:
+            _human_type(page, text_inputs.nth(_idx), _val)
             # Random thinking pause between fields (human-like hesitation)
             if random.random() < 0.4:
                 time.sleep(random.uniform(1.0, 2.5))
-        _pwd_loc = _field("Password", 0, True)
-        _human_type(page, _pwd_loc, password)
-        try:
-            page.keyboard.press("Tab")
-            _human_pause(0.3, 0.6)
-            if _pwd_loc.input_value() != password:
-                try:
-                    _pwd_loc.fill("")
-                except Exception:
-                    pass
-                _human_type(page, _pwd_loc, password)
-        except Exception:
-            pass
+        _human_type(page, pwd_inputs.nth(0), password)
 
         # Select birthday
         dob_ok = _select_birthday(page, birth_date.day, birth_month, birth_date.year)
@@ -596,9 +514,21 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             except Exception:
                 pass
             if not navigated:
+                # Retry once: scroll to Submit and click it again.
+                with print_lock:
+                    print(f"{YELLOW}[Browser] Submit didn't navigate, retrying Submit click{WHITE}")
+                try:
+                    btn.scroll_into_view_if_needed(timeout=5000)
+                    _human_pause(0.5, 1.0)
+                    btn.click(timeout=10000)
+                    page.wait_for_url(lambda url: "/r.php" not in url and "/reg" not in url, timeout=10000)
+                    navigated = True
+                except Exception:
+                    pass
+            if not navigated:
                 # Fallback: press Enter on password field
                 with print_lock:
-                    print(f"{YELLOW}[Browser] Click didn't navigate, trying Enter key{WHITE}")
+                    print(f"{YELLOW}[Browser] Still no navigation, trying Enter key{WHITE}")
                 try:
                     pwd_inputs.nth(0).click()
                     _human_pause(0.3, 0.6)
