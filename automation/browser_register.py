@@ -90,27 +90,46 @@ def _human_type(page, selector, text, min_delay=80, max_delay=250):
 
 
 def _select_birthday(page, day, month, year):
-    """Select birthday via custom comboboxes (click combobox, then option)."""
+    """Select birthday via custom comboboxes (click combobox, then option).
+
+    Facebook's live combobox accessible names are lowercase
+    ('Select day'/'Select month'/'Select year') and their order
+    varies per session, so each is found by name (never by index).
+    The selection is verified by reading the combobox text back:
+    an unverified click used to leave DOB unset in Facebook's
+    state, so the form silently stayed on /reg with no alert and
+    no aria-invalid field. No Escape press - clicking the option
+    commits the value, and Escape can revert it.
+    """
     ok = True
     for combo_name, opt_name, use_exact in [
-        ("Select Month", month, False),
-        ("Select Day", str(day), True),
-        ("Select Year", str(year), True),
+        ("Select month", month, False),
+        ("Select day", str(day), True),
+        ("Select year", str(year), True),
     ]:
-        try:
-            page.get_by_role("combobox", name=combo_name).click()
-            _human_pause(0.5, 1.0)
-            page.get_by_role("option", name=opt_name, exact=use_exact).click()
-            _human_pause(0.3, 0.6)
-            page.keyboard.press("Escape")  # Close listbox to commit value
-            _human_pause(0.3, 0.6)
+        selected = False
+        for _try in range(2):
+            try:
+                combo = page.get_by_role("combobox", name=combo_name, exact=True)
+                combo.click()
+                _human_pause(0.5, 1.0)
+                page.get_by_role("option", name=opt_name, exact=use_exact).click()
+                _human_pause(0.3, 0.6)
+                shown = combo.inner_text().strip()
+                if shown and opt_name.lower() in shown.lower():
+                    selected = True
+                    break
+                with print_lock:
+                    print(f"{YELLOW}[Browser] Birthday {combo_name} not verified (shows {shown!r}), retrying{WHITE}")
+            except Exception as e:
+                with print_lock:
+                    print(f"{RED}[Browser] Birthday {combo_name} FAILED: {e}{WHITE}")
+        if selected:
             with print_lock:
-                print(f"{GREEN}[Browser] Birthday {combo_name} -> {opt_name}{WHITE}")
-            _human_pause(0.5, 1.0)
-        except Exception as e:
-            with print_lock:
-                print(f"{RED}[Browser] Birthday {combo_name} FAILED: {e}{WHITE}")
+                print(f"{GREEN}[Browser] Birthday {combo_name} -> {opt_name} (verified){WHITE}")
+        else:
             ok = False
+        _human_pause(0.5, 1.0)
     return ok
 
 
@@ -118,42 +137,40 @@ def _select_gender(page, gender):
     """Select gender via combobox (options: Female/Male/Custom)."""
     opt = "Female" if gender.lower() == "female" else "Male"
     ok = False
-    try:
-        # The gender combobox has NO accessible name on the
-        # current form - "Select your gender" is only its
-        # placeholder text - so a by-name lookup can never
-        # match and just burns its full timeout. Locate it by
-        # that visible text instead (verified on the live
-        # form); the 4th combobox stays as a last resort.
-        combo = page.locator('[role="combobox"]:has-text("Select your gender")').first
+    for _try in range(2):
         try:
-            combo.wait_for(timeout=3000)
-        except Exception:
+            # The gender combobox has NO accessible name on the
+            # current form - "Select your gender" is only its
+            # placeholder text - so a by-name lookup can never
+            # match and just burns its full timeout. Locate it by
+            # that visible text instead (verified on the live
+            # form); the 4th combobox stays as a last resort.
+            combo = page.locator('[role="combobox"]:has-text("Select your gender")').first
+            try:
+                combo.wait_for(timeout=3000)
+            except Exception:
+                with print_lock:
+                    print(f"{YELLOW}[Browser] Gender by text not found, trying 4th combobox{WHITE}")
+                combo = page.get_by_role("combobox").nth(3)
+                combo.wait_for(timeout=5000)
+            combo.click()
+            _human_pause(0.5, 1.0)
+            option = page.get_by_role("option", name=opt, exact=True)
+            option.wait_for(state="visible", timeout=10000)
+            option.click()
+            _human_pause(0.3, 0.6)
+            # Verify selection (no Escape: it can revert the value)
+            combo_text = combo.inner_text()
+            if opt.lower() in combo_text.lower():
+                with print_lock:
+                    print(f"{GREEN}[Browser] Gender -> {opt} (verified){WHITE}")
+                ok = True
+                break
             with print_lock:
-                print(f"{YELLOW}[Browser] Gender by text not found, trying 4th combobox{WHITE}")
-            combo = page.get_by_role("combobox").nth(3)
-            combo.wait_for(timeout=5000)
-        combo.click()
-        _human_pause(0.5, 1.0)
-        option = page.get_by_role("option", name=opt, exact=True)
-        option.wait_for(state="visible", timeout=10000)
-        option.click()
-        _human_pause(0.3, 0.6)
-        page.keyboard.press("Escape")  # Close listbox to commit value
-        _human_pause(0.3, 0.6)
-        # Verify selection
-        combo_text = combo.inner_text()
-        if opt.lower() in combo_text.lower():
+                print(f"{YELLOW}[Browser] Gender not verified (shows {combo_text!r}), retrying{WHITE}")
+        except Exception as e:
             with print_lock:
-                print(f"{GREEN}[Browser] Gender -> {opt} (verified){WHITE}")
-            ok = True
-        else:
-            with print_lock:
-                print(f"{YELLOW}[Browser] Gender click done but not verified: {combo_text}{WHITE}")
-            ok = True  # Click succeeded, assume ok
-    except Exception as e:
-        with print_lock:
-            print(f"{RED}[Browser] Gender FAILED: {e}{WHITE}")
+                print(f"{RED}[Browser] Gender FAILED: {e}{WHITE}")
     _human_pause(0.5, 1.0)
     return ok
 
@@ -586,8 +603,13 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             with print_lock:
                 print(f"{CYAN}[Browser] After navigation URL: {current_url}{WHITE}")
 
+        _has_code_field = False
         try:
-            if ("/reg" in current_url or "/r.php" in current_url) and "checkpoint" not in current_url:
+            _has_code_field = page.get_by_label("Confirmation code", exact=True).count() > 0
+        except Exception:
+            pass
+        try:
+            if ("/reg" in current_url or "/r.php" in current_url) and "checkpoint" not in current_url and not _has_code_field:
                 try:
                     page.screenshot(path="fb_submit_debug.png")
                     errors = page.evaluate("""() => {
@@ -622,7 +644,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             current_url = page.url.lower()
         except Exception:
             current_url = ""
-        on_confirm_page = "confirmemail" in current_url or "checkpoint" in current_url or "confirm" in current_url
+        on_confirm_page = "confirmemail" in current_url or "checkpoint" in current_url or "confirm" in current_url or _has_code_field
 
         # Check if we're logged in (c_user cookie) AND not on confirm page
         cookies = page.context.cookies()
