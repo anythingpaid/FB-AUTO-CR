@@ -92,14 +92,15 @@ def _human_type(page, selector, text, min_delay=80, max_delay=250):
 def _select_birthday(page, day, month, year):
     """Select birthday via custom comboboxes (click combobox, then option).
 
-    Facebook's live combobox accessible names are lowercase
-    ('Select day'/'Select month'/'Select year') and their order
-    varies per session, so each is found by name (never by index).
-    The selection is verified by reading the combobox text back:
-    an unverified click used to leave DOB unset in Facebook's
-    state, so the form silently stayed on /reg with no alert and
-    no aria-invalid field. No Escape press - clicking the option
-    commits the value, and Escape can revert it.
+    Facebook's DOB comboboxes are custom widgets: clicking one
+    mounts a role=listbox in a portal at the end of <body>. The
+    reliable pattern is: click combobox -> wait for the listbox
+    to be visible (searched from page, not the form) -> real
+    click on the option -> wait for the listbox to hide -> verify
+    the combobox now shows the chosen value. Names are matched
+    case-insensitively (live names are "Select Month/Day/Year";
+    exact=True would break on capitalization). No Escape press -
+    it dismisses without committing.
     """
     ok = True
     for combo_name, opt_name, use_exact in [
@@ -110,11 +111,15 @@ def _select_birthday(page, day, month, year):
         selected = False
         for _try in range(2):
             try:
-                combo = page.get_by_role("combobox", name=combo_name, exact=True)
+                combo = page.get_by_role("combobox", name=combo_name)
                 combo.click()
-                _human_pause(0.5, 1.0)
+                listbox = page.get_by_role("listbox").first
+                listbox.wait_for(state="visible", timeout=5000)
                 page.get_by_role("option", name=opt_name, exact=use_exact).click()
-                _human_pause(0.3, 0.6)
+                try:
+                    listbox.wait_for(state="hidden", timeout=3000)
+                except Exception:
+                    pass
                 shown = combo.inner_text().strip()
                 if shown and opt_name.lower() in shown.lower():
                     selected = True
@@ -154,11 +159,13 @@ def _select_gender(page, gender):
                 combo = page.get_by_role("combobox").nth(3)
                 combo.wait_for(timeout=5000)
             combo.click()
-            _human_pause(0.5, 1.0)
-            option = page.get_by_role("option", name=opt, exact=True)
-            option.wait_for(state="visible", timeout=10000)
-            option.click()
-            _human_pause(0.3, 0.6)
+            listbox = page.get_by_role("listbox").first
+            listbox.wait_for(state="visible", timeout=5000)
+            page.get_by_role("option", name=opt, exact=True).click()
+            try:
+                listbox.wait_for(state="hidden", timeout=3000)
+            except Exception:
+                pass
             # Verify selection (no Escape: it can revert the value)
             combo_text = combo.inner_text()
             if opt.lower() in combo_text.lower():
