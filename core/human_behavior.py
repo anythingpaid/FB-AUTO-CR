@@ -68,13 +68,16 @@ def human_type(page_or_locator, text, make_typos=True):
                 pass
             time.sleep(random.uniform(0.1, 0.2))
         # Variable speed: slower at start/end of text
-        delay = random.uniform(0.03, 0.12)
+        delay = random.uniform(0.05, 0.15)
         if i == 0 or i == len(text) - 1:
             delay += random.uniform(0.05, 0.15)
         try:
             page_or_locator.type(char, delay=int(delay * 1000))
         except Exception:
             pass
+        # Real pause between keystrokes (per-char type() delay
+        # does not pause between separate calls)
+        time.sleep(delay)
         # Occasional thinking pause mid-typing
         if random.random() < 0.03:
             time.sleep(random.uniform(0.3, 0.8))

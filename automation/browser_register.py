@@ -80,6 +80,15 @@ def _human_type(page, selector, text, min_delay=80, max_delay=250):
     Accepts CSS selector string or Locator.
     """
     element = selector if hasattr(selector, "click") else page.locator(selector)
+    # Move the mouse to the field (Bezier) before clicking, like a human
+    try:
+        _box = element.bounding_box(timeout=3000)
+        if _box:
+            _hb_mouse_move(page, _box["x"] + _box["width"] / 2,
+                           _box["y"] + _box["height"] / 2)
+            _hb_pause(0.1, 0.3)
+    except Exception:
+        pass
     try:
         element.click()
     except Exception:
@@ -103,10 +112,10 @@ def _select_birthday(page, day, month, year):
     ]:
         try:
             combo = page.get_by_role("combobox", name=combo_name)
-            combo.click()
+            _human_click(page, combo)
             listbox = page.get_by_role("listbox").first
             listbox.wait_for(state="visible", timeout=5000)
-            page.get_by_role("option", name=opt_name, exact=use_exact).click()
+            _human_click(page, page.get_by_role("option", name=opt_name, exact=use_exact))
             try:
                 listbox.wait_for(state="hidden", timeout=3000)
             except Exception:
@@ -137,10 +146,10 @@ def _select_gender(page, gender):
                 print(f"{YELLOW}[Browser] Gender by text not found, trying 4th combobox{WHITE}")
             combo = page.get_by_role("combobox").nth(3)
             combo.wait_for(timeout=5000)
-        combo.click()
+        _human_click(page, combo)
         listbox = page.get_by_role("listbox").first
         listbox.wait_for(state="visible", timeout=5000)
-        page.get_by_role("option", name=opt, exact=True).click()
+        _human_click(page, page.get_by_role("option", name=opt, exact=True))
         try:
             listbox.wait_for(state="hidden", timeout=3000)
         except Exception:
@@ -497,6 +506,15 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             _human_pause(0.3, 0.6)
             btn.scroll_into_view_if_needed(timeout=5000)
             _human_pause(0.5, 1.0)
+            # Move the mouse to Submit (Bezier) before clicking, like a human
+            try:
+                _sbox = btn.bounding_box(timeout=3000)
+                if _sbox:
+                    _hb_mouse_move(page, _sbox["x"] + _sbox["width"] / 2,
+                                   _sbox["y"] + _sbox["height"] / 2)
+                    _hb_pause(0.1, 0.3)
+            except Exception:
+                pass
             try:
                 btn.click(timeout=10000)
             except Exception:
