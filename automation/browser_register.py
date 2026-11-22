@@ -1136,6 +1136,37 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
         return {"status": "error", "reason": str(e)}
 
 
+def _random_context_kwargs(browser):
+    """Per-account device identity: UA from the real browser version,
+    random common viewport, US timezone. Fresh fingerprint per ID."""
+    try:
+        _major = str(browser.version).split(".")[0]
+    except Exception:
+        _major = "131"
+    _ua = (f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+           f"AppleWebKit/537.36 (KHTML, like Gecko) "
+           f"Chrome/{_major}.0.0.0 Safari/537.36")
+    _viewports = [
+        {"width": 1366, "height": 768},
+        {"width": 1536, "height": 864},
+        {"width": 1920, "height": 1080},
+        {"width": 1440, "height": 900},
+        {"width": 1280, "height": 720},
+        {"width": 1600, "height": 900},
+    ]
+    _timezones = [
+        "America/New_York", "America/Chicago", "America/Denver",
+        "America/Los_Angeles", "America/Phoenix", "America/Detroit",
+    ]
+    return {
+        "user_agent": _ua,
+        "viewport": random.choice(_viewports),
+        "locale": "en-US",
+        "timezone_id": random.choice(_timezones),
+        "color_scheme": "light",
+    }
+
+
 def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"):
     """
     Run browser automation for a list of numbers (sequential, one by one).
@@ -1179,8 +1210,16 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                     if sms_url:
                         print(f"{CYAN}SMS URL: {sms_url[:50]}...{WHITE}")
 
-                # Fresh context per account (incognito-like)
-                context = browser.new_context()
+                # Fresh context per account (incognito-like).
+                # Each ID gets its own device identity (UA, viewport,
+                # timezone) - CloakBrowser manages its own, so skip there.
+                if _is_cloak:
+                    context = browser.new_context()
+                else:
+                    _ctx_kwargs = _random_context_kwargs(browser)
+                    context = browser.new_context(**_ctx_kwargs)
+                    with print_lock:
+                        print(f"{CYAN}[Browser] Device: {_ctx_kwargs['viewport']['width']}x{_ctx_kwargs['viewport']['height']} | {_ctx_kwargs['timezone_id']}{WHITE}")
                 page = context.new_page()
 
                 try:
