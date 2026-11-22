@@ -118,7 +118,7 @@ def _select_birthday(page, day, month, year):
             _human_click(page, combo)
             listbox = page.get_by_role("listbox").first
             listbox.wait_for(state="visible", timeout=5000)
-            page.get_by_role("option", name=opt_name, exact=use_exact).click()
+            _human_click(page, page.get_by_role("option", name=opt_name, exact=use_exact))
             try:
                 listbox.wait_for(state="hidden", timeout=3000)
             except Exception:
@@ -152,7 +152,7 @@ def _select_gender(page, gender):
         _human_click(page, combo)
         listbox = page.get_by_role("listbox").first
         listbox.wait_for(state="visible", timeout=5000)
-        page.get_by_role("option", name=opt, exact=True).click()
+        _human_click(page, page.get_by_role("option", name=opt, exact=True))
         try:
             listbox.wait_for(state="hidden", timeout=3000)
         except Exception:
@@ -625,7 +625,17 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             # Random thinking pause between fields (human-like hesitation)
             if random.random() < 0.4:
                 time.sleep(random.uniform(1.0, 2.5))
+        # Gentle scroll down to the lower part of the form,
+        # like a human moving through the fields
+        try:
+            page.mouse.wheel(0, random.randint(150, 300))
+            _human_pause(0.5, 1.0)
+        except Exception:
+            pass
         _human_type(page, pwd_inputs.nth(0), password)
+
+        # Thinking pause before birthday (humans pause to recall it)
+        _human_pause(0.8, 1.8)
 
         # Select birthday
         dob_ok = _select_birthday(page, birth_date.day, birth_month, birth_date.year)
@@ -641,6 +651,16 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             page.screenshot(path="fb_form_debug.png")
             counter.update("failed")
             return {"status": "failed", "number": phone_number, "reason": "dob/gender failed"}
+
+        # Review the form before submitting, like a human:
+        # scroll up to glance over the fields, pause, scroll back down
+        try:
+            page.evaluate("window.scrollTo(0, 0)")
+            _human_pause(0.8, 1.5)
+            page.mouse.wheel(0, random.randint(200, 350))
+            _human_pause(0.6, 1.2)
+        except Exception:
+            pass
 
         # Diagnostic: check field values before submit
         try:

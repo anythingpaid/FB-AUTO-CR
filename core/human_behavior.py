@@ -33,30 +33,50 @@ def _bezier_points(x0, y0, x3, y3, num_points=20):
     return points
 
 
+_LAST_MOUSE = [None, None]
+
+
 def human_mouse_move(page, x, y, from_x=None, from_y=None):
-    """Move mouse along a natural Bezier curve (not a straight line)."""
+    """Move mouse along a natural Bezier curve from its last position."""
     try:
         if from_x is None or from_y is None:
-            # Start from a random nearby point if no start given
-            from_x = x + random.randint(-200, 200)
-            from_y = y + random.randint(-150, 150)
+            if _LAST_MOUSE[0] is not None:
+                from_x, from_y = _LAST_MOUSE[0], _LAST_MOUSE[1]
+            else:
+                from_x = x + random.randint(-200, 200)
+                from_y = y + random.randint(-150, 150)
         points = _bezier_points(from_x, from_y, x, y)
         for px, py in points:
             page.mouse.move(px, py)
             time.sleep(random.uniform(0.005, 0.02))
+        _LAST_MOUSE[0], _LAST_MOUSE[1] = x, y
     except Exception:
         try:
             page.mouse.move(x, y)
+            _LAST_MOUSE[0], _LAST_MOUSE[1] = x, y
         except Exception:
             pass
 
 
+_NEIGHBORS = {
+    'a': 'qwsz', 'b': 'vghn', 'c': 'xdfv', 'd': 'serfcx', 'e': 'wsdr',
+    'f': 'drtgv', 'g': 'ftyhb', 'h': 'gyujn', 'i': 'ujko', 'j': 'huikm',
+    'k': 'jiolm', 'l': 'kop', 'm': 'njk', 'n': 'bjmh', 'o': 'iklp',
+    'p': 'ol', 'q': 'wa', 'r': 'edft', 's': 'awedxz', 't': 'rfgy',
+    'u': 'yhji', 'v': 'cfgb', 'w': 'qase', 'x': 'zsdc', 'y': 'tghu',
+    'z': 'asx',
+}
+
+
 def human_type(page_or_locator, text, make_typos=True):
-    """Type text naturally: variable speed, slower at word edges, occasional typos."""
+    """Type text naturally: real rhythm, adjacent-key typos, variable speed."""
     for i, char in enumerate(text):
-        # Occasional typo: wrong char -> pause -> backspace -> correct
-        if make_typos and char.isalpha() and random.random() < 0.005:
-            wrong = random.choice('qwertyuiopasdfghjklzxcvbnm')
+        # Occasional typo: adjacent key -> pause -> backspace -> correct
+        if make_typos and char.isalpha() and random.random() < 0.008:
+            _nb = _NEIGHBORS.get(char.lower(), 'qwertyuiopasdfghjklzxcvbnm')
+            wrong = random.choice(_nb)
+            if char.isupper():
+                wrong = wrong.upper()
             try:
                 page_or_locator.type(wrong, delay=random.randint(30, 80))
             except Exception:
@@ -67,8 +87,18 @@ def human_type(page_or_locator, text, make_typos=True):
             except Exception:
                 pass
             time.sleep(random.uniform(0.1, 0.2))
-        # Variable speed: slower at start/end of text
-        delay = random.uniform(0.04, 0.10)
+        # Real rhythm: slower on uppercase, digits and symbols;
+        # natural pause at word boundaries (space)
+        if char == ' ':
+            delay = random.uniform(0.08, 0.20)
+        elif char.isdigit():
+            delay = random.uniform(0.06, 0.12)
+        elif char.isupper():
+            delay = random.uniform(0.07, 0.13)
+        elif not char.isalnum():
+            delay = random.uniform(0.07, 0.14)
+        else:
+            delay = random.uniform(0.04, 0.09)
         if i == 0 or i == len(text) - 1:
             delay += random.uniform(0.03, 0.08)
         try:
