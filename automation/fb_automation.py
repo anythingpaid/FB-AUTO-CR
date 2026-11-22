@@ -426,17 +426,8 @@ def run_reviews_mode():
     total = len(queue)
 
     with sync_playwright() as p:
-        _exe = os.path.expandvars(
-            r"C:\Users\Rizvi Lion\AppData\Local\ms-playwright\chromium-1243\chrome-win\chrome.exe"
-        )
-        _launch_kwargs = dict(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        _lk = dict(_launch_kwargs)
-        if os.path.exists(_exe):
-            _lk["executable_path"] = _exe
-        browser = p.chromium.launch(**_lk)
+        from core.browser_launcher import launch_browser
+        browser, _ = launch_browser(p, headless=False)
 
         done = 0
         for acc_line in accounts:
@@ -559,17 +550,8 @@ def run_dp_feedback_mode():
     queue = list(reviews)  # next review to post is queue[0]
     done = dp_done = 0
     with sync_playwright() as p:
-        _exe = os.path.expandvars(
-            r"C:\Users\Rizvi Lion\AppData\Local\ms-playwright\chromium-1243\chrome-win\chrome.exe"
-        )
-        _launch_kwargs = dict(
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
-        _lk = dict(_launch_kwargs)
-        if os.path.exists(_exe):
-            _lk["executable_path"] = _exe
-        browser = p.chromium.launch(**_lk)  # DIRECT - no proxy
+        from core.browser_launcher import launch_browser
+        browser, _ = launch_browser(p, headless=False)
         for i, acc_line in enumerate(accounts):
             if not queue:
                 break  # every review posted
