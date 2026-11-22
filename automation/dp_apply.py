@@ -568,8 +568,8 @@ def process_account(pw, account, headless=False):
     pick a pic from dp_pics/ (name + gender match) and apply it.
     Returns dict(uid, name, ok, skipped, via, detail)."""
     uid = account["uid"]
-    browser = pw.chromium.launch(headless=headless,
-                                 args=["--no-sandbox"])
+    from core.browser_launcher import launch_browser
+    browser, _ = launch_browser(pw, headless=headless, extra_args=["--no-sandbox"])
     try:
         ctx = browser.new_context()
         cookies = parse_cookie_string(account.get("cookies", ""),
