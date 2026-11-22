@@ -725,23 +725,11 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                     pass
                 return False
 
-            def _scroll_while_waiting():
-                # Human up/down scroll while waiting for the page
-                # to move past the reg form after Submit.
-                try:
-                    _delta = random.randint(150, 400)
-                    if random.random() < 0.5:
-                        _delta = -_delta
-                    page.mouse.wheel(0, _delta)
-                except Exception:
-                    pass
-
             navigated = False
             for _ in range(16):  # up to ~8s, exits the moment it submits
                 if _submit_done():
                     navigated = True
                     break
-                _scroll_while_waiting()
                 time.sleep(0.5)
             if not navigated:
                 # Retry once: scroll to Submit and click it again.
@@ -755,7 +743,6 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                         if _submit_done():
                             navigated = True
                             break
-                        _scroll_while_waiting()
                         time.sleep(0.5)
                 except Exception:
                     pass
@@ -771,7 +758,6 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                         if _submit_done():
                             navigated = True
                             break
-                        _scroll_while_waiting()
                         time.sleep(0.5)
                 except Exception:
                     pass
