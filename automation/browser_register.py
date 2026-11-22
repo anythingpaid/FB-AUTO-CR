@@ -54,6 +54,9 @@ from core.human_behavior import (
 )
 
 
+PAGE_CREATE_MODE = "id_only"
+
+
 def _human_pause(min_s=1.0, max_s=3.0):
     """Random pause between actions (shared human behavior)."""
     _hb_pause(min_s, max_s)
@@ -298,6 +301,188 @@ def _fetch_otp_from_url(page, sms_url, timeout=20, interval=2):
             pass
         time.sleep(interval)
     return None
+
+
+_PAGE_CATEGORIES = [
+    "Musician/band", "Artist", "Photographer", "Restaurant", "Cafe",
+    "Bakery", "Clothing Store", "Gym", "Beauty Salon", "Barber Shop",
+    "Bookstore", "Pet Store", "Florist", "Writer", "Actor", "Comedian",
+    "Dance Studio", "Yoga Studio", "Art Gallery", "Travel Agency",
+    "Real Estate Agent", "Fitness Trainer", "Jewelry Store",
+    "Furniture Store", "Car Dealership",
+]
+
+
+def _page_gen_name():
+    try:
+        return Faker("en_US").company()
+    except Exception:
+        return "Bright Star Media"
+
+
+def _page_create_after_create(page, uid):
+    if PAGE_CREATE_MODE != "id+page":
+        return
+    try:
+        _human_pause(0.8, 1.5)
+        page.goto("https://www.facebook.com/pages/create",
+                  wait_until="domcontentloaded", timeout=30000)
+        name = _page_gen_name()
+        name_box = page.get_by_role("textbox", name="Page name (required)")
+        try:
+            name_box.wait_for(state="visible", timeout=10000)
+        except Exception:
+            pass
+        _human_type(page, name_box, name)
+        page.wait_for_timeout(800)
+        category = os.environ.get("FB_PAGE_CATEGORY", "").strip() or random.choice(_PAGE_CATEGORIES)
+        with print_lock:
+            print(f"{CYAN}[Browser] Page {uid}: category '{category}'{WHITE}")
+        cat_box = page.get_by_role("combobox", name="Category (required)")
+        _human_click(page, cat_box)
+        _human_type(page, cat_box, category)
+        page.wait_for_timeout(800)
+        try:
+            _human_click(page, page.get_by_role("option", name=category).first)
+        except Exception:
+            try:
+                _matched = None
+                for _o in page.get_by_role("option").all():
+                    try:
+                        _t = (_o.inner_text(timeout=2000) or "").strip()
+                    except Exception:
+                        continue
+                    if _t and category.lower() in _t.lower():
+                        _matched = _o
+                        break
+                if _matched is None:
+                    raise RuntimeError("no matching category option")
+                _human_click(page, _matched)
+            except Exception:
+                with print_lock:
+                    print(f"{YELLOW}[Browser] Page {uid}: category option not found - skipped (ID stays created){WHITE}")
+                return
+        page.wait_for_timeout(600)
+        bio = os.environ.get("FB_PAGE_BIO", "").strip()
+        if bio:
+            try:
+                _human_type(page, page.get_by_role("textbox", name="Bio (optional)"), bio)
+            except Exception:
+                pass
+        create_btn = page.get_by_role("button", name="Create Page")
+        try:
+            create_btn.wait_for(state="visible", timeout=10000)
+            for _ in range(20):
+                try:
+                    if create_btn.is_enabled():
+                        break
+                except Exception:
+                    pass
+                page.wait_for_timeout(500)
+        except Exception:
+            pass
+        try:
+            if not create_btn.is_enabled():
+                with print_lock:
+                    print(f"{YELLOW}[Browser] Page {uid}: 'Create Page' stayed disabled - skipped (ID stays created){WHITE}")
+                return
+        except Exception:
+            pass
+        try:
+            _human_click(page, create_btn)
+        except Exception as e:
+            with print_lock:
+                print(f"{YELLOW}[Browser] Page {uid}: 'Create Page' click failed ({str(e)[:80]}) - skipped (ID stays created){WHITE}")
+            return
+        success = False
+        for _ in range(30):
+            try:
+                if page.get_by_text(f"Success! You've created {name}").first.is_visible():
+                    success = True
+                    break
+            except Exception:
+                pass
+            try:
+                for _bname in ("Next", "Skip", "Done"):
+                    if page.get_by_role("button", name=_bname).first.is_visible():
+                        success = True
+                        break
+                if success:
+                    break
+            except Exception:
+                pass
+            page.wait_for_timeout(500)
+        if not success:
+            try:
+                if page.get_by_text("Finish setting up your Page").first.is_visible():
+                    success = True
+            except Exception:
+                pass
+        if not success:
+            with print_lock:
+                print(f"{YELLOW}[Browser] Page {uid}: no success message after Create Page - skipped (ID stays created){WHITE}")
+            return
+        try:
+            _human_click(page, page.get_by_role("button", name="Close").first)
+        except Exception:
+            pass
+        for _step in range(6):
+            page.wait_for_timeout(700)
+            _clicked = False
+            for _bname in ("Done", "Skip", "Next"):
+                try:
+                    _b = page.get_by_role("button", name=_bname).first
+                    if _b.is_visible():
+                        _human_click(page, _b)
+                        _clicked = True
+                        break
+                except Exception:
+                    continue
+            if not _clicked:
+                break
+        page_url = ""
+        try:
+            page.goto("https://www.facebook.com/pages/?category=your_pages",
+                      wait_until="domcontentloaded", timeout=30000)
+            _page_link = page.get_by_role("link", name=name).first
+            try:
+                _page_link.wait_for(state="visible", timeout=10000)
+            except Exception:
+                pass
+            _human_click(page, _page_link)
+            page.wait_for_timeout(1000)
+            page_url = page.url
+        except Exception:
+            with print_lock:
+                print(f"{YELLOW}[Browser] Page {uid}: created '{name}' but Page URL not found - saved without URL{WHITE}")
+        _profile_ok = False
+        try:
+            if page_url:
+                page.goto(page_url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    page.get_by_text(name).first.wait_for(state="visible", timeout=8000)
+                    _profile_ok = True
+                except Exception:
+                    _profile_ok = page.get_by_text(name).first.is_visible()
+        except Exception:
+            _profile_ok = False
+        if not _profile_ok:
+            with print_lock:
+                print(f"{YELLOW}[Browser] Page {uid}: '{name}' created but profile did NOT open - not counted as created{WHITE}")
+            return
+        try:
+            from core.path_manager import get_output_dir
+            _out = get_output_dir()
+            os.makedirs(_out, exist_ok=True)
+            with open(os.path.join(_out, "pages.txt"), "a", encoding="utf-8") as f:
+                f.write(f"{name}|{uid}|{page_url}\n")
+        except Exception:
+            pass
+        with print_lock:
+            print(f"{GREEN}[Browser] Page {uid}: created '{name}' ({page_url}) - profile open verified{WHITE}")
+    except Exception as e:
+        with print_lock:
+            print(f"{YELLOW}[Browser] Page {uid}: error ({e}) - ID stays created{WHITE}"[:160])
 
 
 def browser_create_account(page, phone_number, password, counter=None, sms_url=None):
@@ -735,6 +920,9 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             if counter:
                 counter.update("success")
 
+            if PAGE_CREATE_MODE == "id+page":
+                _page_create_after_create(page, c_user)
+
             return {
                 "status": "success",
                 "uid": c_user,
@@ -893,6 +1081,9 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                                 "result_line": f"{c_user}|{password}|{cookie_str}",
                                 "reason": "profile_verification_pending",
                             }
+                        if PAGE_CREATE_MODE == "id+page":
+                            _page_create_after_create(page, c_user)
+
                         return {
                             "status": "success",
                             "uid": c_user,
@@ -925,7 +1116,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
         return {"status": "error", "reason": str(e)}
 
 
-def run_browser_mode(numbers, password_config, counter=None):
+def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"):
     """
     Run browser automation for a list of numbers (sequential, one by one).
 
@@ -943,6 +1134,9 @@ def run_browser_mode(numbers, password_config, counter=None):
 
     if counter is None:
         counter = Counter()
+
+    global PAGE_CREATE_MODE
+    PAGE_CREATE_MODE = page_mode
 
     def _get_password(cfg):
         if cfg and cfg.get("type") == "fixed" and cfg.get("value"):

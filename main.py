@@ -38,6 +38,30 @@ def render_config(config_state):
 
 
 # Main entry point - collects user input and launches automation workers
+def get_page_create_choice():
+    print(f" {GREEN}[{RED}01{GREEN}] ID only")
+    print(f" {GREEN}[{RED}02{GREEN}] ID + Page")
+    print(f"{LINE}")
+    choice = input(f" {GREEN}[{RED}●{GREEN}] Select Page (1/2) [1] {EKL} ").strip()
+    if choice == "2":
+        return "id+page"
+    return "id_only"
+
+
+def resolve_page_create_mode():
+    env = os.environ.get("FB_PAGE_CREATE", "").strip().lower()
+    if env in ("id+page", "page"):
+        return "id+page"
+    if env in ("id", "id_only", "id-only"):
+        return "id_only"
+    try:
+        if sys.stdin.isatty():
+            return get_page_create_choice()
+    except Exception:
+        pass
+    return "id_only"
+
+
 def run_create():
     config_state = {}
 
@@ -135,6 +159,7 @@ def run_create():
         from automation.browser_register import run_browser_mode
         password_config = select_password_config(config_state, lambda: render_config(config_state))
         render_config(config_state)
+        page_mode = resolve_page_create_mode()
         numbers = process_file_input()
         if numbers is None:
             input(f"\n {RED}Press Enter to exit...")
@@ -146,7 +171,7 @@ def run_create():
         input(f"\n {WHITE}Press Enter to start browser automation... ")
         logo()
         counter = Counter()
-        run_browser_mode(numbers, password_config, counter)
+        run_browser_mode(numbers, password_config, counter, page_mode)
         _dp = input(f"\n {GREEN}[{RED}●{GREEN}] Apply DPs to these IDs now? (y/n) [n] {EKL} ").strip().lower()
         if _dp == "y":
             from automation.dp_apply import run_dp_mode
