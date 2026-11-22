@@ -1196,9 +1196,13 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
 
     with sync_playwright() as p:
         # Browser choice: Chromium / Real Chrome / CloakBrowser
-        from core.browser_launcher import get_browser_choice, launch_browser
+        from core.browser_launcher import get_browser_choice, launch_browser, ROTATION_BROWSERS
         _browser_type = get_browser_choice()
-        browser, _is_cloak = launch_browser(p, _browser_type, headless=False)
+        _rotation = _browser_type == "rotation"
+        browser = None
+        _is_cloak = False
+        if not _rotation:
+            browser, _is_cloak = launch_browser(p, _browser_type, headless=False)
         try:
             for idx, entry in enumerate(numbers, 1):
                 number, sms_url = _parse_number_entry(entry)
@@ -1210,9 +1214,14 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                     if sms_url:
                         print(f"{CYAN}SMS URL: {sms_url[:50]}...{WHITE}")
 
+                # Rotation: each ID gets the next browser in turn.
+                if _rotation:
+                    _bt = ROTATION_BROWSERS[(idx - 1) % len(ROTATION_BROWSERS)]
+                    browser, _is_cloak = launch_browser(p, _bt, headless=False)
+
                 # Fresh context per account (incognito-like).
                 # Each ID gets its own device identity (UA, viewport,
-                # timezone) - CloakBrowser manages its own, so skip there.
+                # timezone) - spoofing browsers manage their own, skip there.
                 if _is_cloak:
                     context = browser.new_context()
                 else:
@@ -1274,6 +1283,13 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                         context.close()
                     except Exception:
                         pass
+                    # Rotation: close this ID's browser too
+                    if _rotation and browser is not None:
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
+                        browser = None
 
                 # Pause between accounts
                 if idx < len(numbers):
@@ -1283,7 +1299,11 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                     time.sleep(pause)
 
         finally:
-            browser.close()
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
 
         # Print summary
         s = counter.summary()
