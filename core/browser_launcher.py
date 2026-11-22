@@ -202,9 +202,9 @@ def get_browser_choice():
     print("Browser Setup:")
     print("  1. Chromium 126")
     print("  2. Clearcote")
-    print("  3. fingerprint-chromium")
+    print("  3. Fingerprint-Chromium")
     print("  4. Apostate")
-    print("  5. Rotation (each ID on a different browser)")
+    print("  5. Browser Rotation")
     print("=" * 50)
     try:
         _choice = input("Choose browser (1-5): ").strip()
