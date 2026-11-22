@@ -5,6 +5,8 @@ requests
 playwright
 playwright-stealth==1.0.6
 google-generativeai
+clearcote
+apostate
 # cloakbrowser
 
 # --- Upar wali 3 linein 2026-10-21 ko add huin: ye packages code
