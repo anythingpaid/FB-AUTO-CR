@@ -2,7 +2,7 @@ curl_cffi
 faker
 openpyxl
 requests
-playwright==1.61.1
+playwright==1.61.0
 playwright-stealth==1.0.6
 google-generativeai
 clearcote
