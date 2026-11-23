@@ -202,12 +202,54 @@ def _find_apostate():
     return None
 
 
+def _ensure_apostate_manifest(exe):
+    """Apostate's Windows build ships without the side-by-side assembly
+    manifest its chrome.exe depends on, so Windows refuses to start it
+    ("side-by-side configuration is incorrect"). Write the manifest
+    next to chrome.exe when it is missing."""
+    import re
+
+    _exe_path = Path(exe)
+    _version = _exe_path.parent.parent.parent.name
+    if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", _version):
+        return
+    _manifest = _exe_path.parent / f"{_version}.manifest"
+    if _manifest.exists():
+        return
+    _dlls = [
+        "chrome.dll",
+        "chrome_elf.dll",
+        "d3dcompiler_47.dll",
+        "libEGL.dll",
+        "libGLESv2.dll",
+        "vk_swiftshader.dll",
+        "vulkan-1.dll",
+        "mojo_core.dll",
+    ]
+    _files = "\n".join(
+        f'  <file name="{_dll}"/>'
+        for _dll in _dlls
+        if (_exe_path.parent / _dll).exists()
+    )
+    _manifest.write_text(
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<assembly xmlns="urn:schemas-microsoft-com:asm.v1" '
+        'manifestVersion="1.0">\n'
+        f'  <assemblyIdentity name="{_version}" version="{_version}" '
+        'type="win32"/>\n'
+        f"{_files}\n"
+        "</assembly>\n",
+        encoding="utf-8",
+    )
+
+
 def _ensure_apostate():
     """Return the Apostate chrome.exe path, downloading the build
     automatically on first run (python -m apostate install).
     Raises RuntimeError if the install fails."""
     _exe = _find_apostate()
     if _exe:
+        _ensure_apostate_manifest(_exe)
         return _exe
     try:
         import apostate  # noqa: F401
@@ -231,6 +273,7 @@ def _ensure_apostate():
             "Check your internet connection and run again. "
             f"Installer said: {(_result.stderr or _result.stdout or '')[-300:]}"
         )
+    _ensure_apostate_manifest(_exe)
     print("[Browser] Apostate ready")
     return _exe
 
