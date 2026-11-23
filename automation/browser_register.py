@@ -199,7 +199,6 @@ def _click_resend_twice(page):
                 btn.click()
                 with print_lock:
                     print(f"{CYAN}[Browser] Expander clicked to reveal resend{WHITE}")
-                _human_pause(0.3, 0.6)
                 break
         except Exception:
             continue
@@ -271,7 +270,7 @@ def _find_continue_button(page, timeout_s=12):
         time.sleep(0.5)
 
 
-def _fetch_otp_from_url(page, sms_url, timeout=20, interval=2):
+def _fetch_otp_from_url(page, sms_url, timeout=25, interval=1):
     """
     Fetch OTP via HTTP requests (simple API endpoint).
     Response is plain text; 'no' prefix means no OTP yet.
@@ -967,6 +966,12 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                 with print_lock:
                     print(f"{CYAN}[Browser] Auto-fetching OTP from SMS link...{WHITE}")
                 code = _fetch_otp_from_url(page, sms_url)
+                if not code:
+                    # Fallback: one more resend, then fetch again
+                    with print_lock:
+                        print(f"{YELLOW}[Browser] No OTP yet - resending once more{WHITE}")
+                    _click_resend_twice(page)
+                    code = _fetch_otp_from_url(page, sms_url)
                 if code:
                     with print_lock:
                         print(f"{GREEN}[Browser] OTP received: {code}{WHITE}")
