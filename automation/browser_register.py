@@ -1185,7 +1185,7 @@ def _random_context_kwargs(browser):
     }
 
 
-def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"):
+def _run_browser_mode_session(numbers, password_config, counter, page_mode, _browser_type, _start_idx, _progress):
     """
     Run browser automation for a list of numbers (sequential, one by one).
 
@@ -1213,16 +1213,19 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
         return generate_random_password()
 
     with sync_playwright() as p:
-        # Browser choice: Chromium / Real Chrome / CloakBrowser
-        from core.browser_launcher import get_browser_choice, launch_browser, ROTATION_BROWSERS
-        _browser_type = get_browser_choice()
+        # Browser choice comes from the wrapper (asked once)
+        from core.browser_launcher import launch_browser, ROTATION_BROWSERS
         _rotation = _browser_type == "rotation"
+        _resume_from = None
         browser = None
         _is_cloak = False
         try:
             for idx, entry in enumerate(numbers, 1):
+                if idx <= _start_idx:
+                    continue  # Already done in a previous session
                 number, sms_url = _parse_number_entry(entry)
                 if not number:
+                    _progress[0] = idx
                     continue  # Skip empty/comment lines
                 with print_lock:
                     print(f"\n{LINE}")
@@ -1237,7 +1240,25 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                     _bt = ROTATION_BROWSERS[(idx - 1) % len(ROTATION_BROWSERS)]
                 else:
                     _bt = _browser_type
-                browser, _is_cloak = launch_browser(p, _bt, headless=False)
+                try:
+                    browser, _is_cloak = launch_browser(p, _bt, headless=False)
+                except Exception as _launch_err:
+                    with print_lock:
+                        print(f"{RED}[Browser] Launch failed for {number}: {_launch_err}{WHITE}")
+                    _err_text = str(_launch_err).lower()
+                    if "connection closed" in _err_text or "driver" in _err_text:
+                        # The Playwright driver itself is dead -
+                        # this session cannot recover. Stop here;
+                        # the wrapper restarts and resumes at this
+                        # same account (launch never happened, so
+                        # the number is not burned).
+                        _resume_from = idx - 1
+                        break
+                    if counter:
+                        counter.update("failed")
+                    _progress[0] = idx
+                    time.sleep(random.uniform(3, 5))
+                    continue
 
                 # Fresh context per account (incognito-like).
                 # Each ID gets its own device identity (UA, viewport,
@@ -1319,6 +1340,8 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                             pass
                         browser = None
 
+                _progress[0] = idx
+
                 # Pause between accounts
                 if idx < len(numbers):
                     pause = random.uniform(3, 5)
@@ -1333,14 +1356,48 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                 except Exception:
                     pass
 
-        # Print summary
-        s = counter.summary()
+        # Print summary (only when the run truly finished -
+        # not when a dead driver forced a session restart)
+        if _resume_from is None:
+            s = counter.summary()
+            with print_lock:
+                print(f"\n{LINE}")
+                print(f" {GREEN}[{RED}●{GREEN}] {WHITE}Browser Mode Completed: {s['checked']} Numbers")
+                print(f" {GREEN}[{RED}●{GREEN}] {GREEN}Success: {s['success']}")
+                print(f" {GREEN}[{RED}●{GREEN}] {RED}Failed: {s['failed']}")
+                print(f"{LINE}")
+        return _resume_from
+
+
+def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"):
+    """Run browser sessions, restarting automatically if the
+    Playwright driver dies mid-run. Resumes at the same account -
+    its launch never happened, so no number is burned."""
+    if not PLAYWRIGHT_AVAILABLE:
+        print(f"{RED}Playwright not installed. Run: pip install playwright{WHITE}")
+        print(f"{RED}Then run: playwright install chromium{WHITE}")
+        return
+    if counter is None:
+        counter = Counter()
+    from core.browser_launcher import get_browser_choice
+    _browser_type = get_browser_choice()
+    _progress = [0]
+    _start_idx = 0
+    for _attempt in range(10):
+        try:
+            _resume_from = _run_browser_mode_session(
+                numbers, password_config, counter, page_mode,
+                _browser_type, _start_idx, _progress)
+        except RuntimeError:
+            # Driver died and Playwright's own shutdown tripped
+            # over the dead event loop - restart the session.
+            _resume_from = _progress[0]
+        if _resume_from is None:
+            return
+        _start_idx = _resume_from
         with print_lock:
-            print(f"\n{LINE}")
-            print(f" {GREEN}[{RED}●{GREEN}] {WHITE}Browser Mode Completed: {s['checked']} Numbers")
-            print(f" {GREEN}[{RED}●{GREEN}] {GREEN}Success: {s['success']}")
-            print(f" {GREEN}[{RED}●{GREEN}] {RED}Failed: {s['failed']}")
-            print(f"{LINE}")
+            print(f"{YELLOW}[Browser] Driver died - restarting session, resuming at account {_start_idx + 1}{WHITE}")
+        time.sleep(2)
 
 
 if __name__ == "__main__":
