@@ -279,11 +279,15 @@ def _show_profile_in_view(page, c_user):
     _hold = random.uniform(3.0, 5.0)
     _start = time.time()
     try:
-        if f"/{c_user}" not in page.url.lower():
+        _on_profile = f"/{c_user}" in page.url.lower()
+    except Exception:
+        _on_profile = True
+    if not _on_profile:
+        try:
             page.goto(f"https://www.facebook.com/{c_user}",
                       wait_until="domcontentloaded", timeout=30000)
-    except Exception:
-        pass
+        except Exception:
+            pass
     try:
         page.bring_to_front()
     except Exception:
@@ -1296,6 +1300,18 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                 except Exception as e:
                     with print_lock:
                         print(f"{RED}[Browser] Account {number} error: {e}{WHITE}")
+                    _err_text = str(e).lower()
+                    if "connection closed" in _err_text or "driver" in _err_text:
+                        # Driver died mid-account - restart the
+                        # session and move to the NEXT account
+                        # (this one may already exist on Facebook,
+                        # so never retry the same number).
+                        if counter:
+                            counter.update("error")
+                        _progress[0] = idx
+                        _resume_from = idx
+                        break
+                    with print_lock:
                         print(f"{YELLOW}[Browser] Fix manually, then Enter=retry, 'skip'=next account{WHITE}")
                     if counter:
                         counter.update("error")
