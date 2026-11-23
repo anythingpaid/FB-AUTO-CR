@@ -1424,9 +1424,11 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
             _resume_from = _run_browser_mode_session(
                 numbers, password_config, counter, page_mode,
                 _browser_type, _start_idx, _progress)
-        except RuntimeError:
-            # Driver died and Playwright's own shutdown tripped
-            # over the dead event loop - restart the session.
+        except Exception:
+            # Any crash escaping the session (driver death,
+            # Playwright shutdown tripping over the dead event
+            # loop, ...) - restart the session from the last
+            # attempted account instead of killing the run.
             _resume_from = _progress[0]
         if _resume_from is None:
             return
