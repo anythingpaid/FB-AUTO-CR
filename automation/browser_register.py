@@ -1261,10 +1261,15 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                         # Save to output (same format as HTTP version).
                         # ONLY fully confirmed accounts whose profile
                         # opened are saved - never pending ones.
+                        # ID+Page accounts go to their OWN file -
+                        # never mixed into the ID-only file.
                         from core.path_manager import get_output_dir
                         output_dir = get_output_dir()
                         os.makedirs(output_dir, exist_ok=True)
-                        with open(os.path.join(output_dir, "browser_accounts.txt"), "a") as f:
+                        _save_file = ("id_page_accounts.txt"
+                                      if PAGE_CREATE_MODE == "id+page"
+                                      else "browser_accounts.txt")
+                        with open(os.path.join(output_dir, _save_file), "a") as f:
                             f.write(result["result_line"] + "\n")
 
                 except Exception as e:
@@ -1292,7 +1297,10 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                                 from core.path_manager import get_output_dir
                                 output_dir = get_output_dir()
                                 os.makedirs(output_dir, exist_ok=True)
-                                with open(os.path.join(output_dir, "browser_accounts.txt"), "a") as f:
+                                _save_file = ("id_page_accounts.txt"
+                                              if PAGE_CREATE_MODE == "id+page"
+                                              else "browser_accounts.txt")
+                                with open(os.path.join(output_dir, _save_file), "a") as f:
                                     f.write(result["result_line"] + "\n")
                         except Exception as e2:
                             with print_lock:
