@@ -346,11 +346,11 @@ def _fetch_otp_from_url(page, sms_url, timeout=25, interval=1):
 
 
 _PAGE_CATEGORIES = [
-    "Musician/band", "Artist", "Photographer", "Restaurant", "Cafe",
-    "Bakery", "Clothing Store", "Gym", "Beauty Salon", "Barber Shop",
-    "Bookstore", "Pet Store", "Florist", "Writer", "Actor", "Comedian",
-    "Dance Studio", "Yoga Studio", "Art Gallery", "Travel Agency",
-    "Real Estate Agent", "Fitness Trainer", "Jewelry Store",
+    "Musician/Band", "Photographer", "Restaurant", "Café",
+    "Bakery", "Clothing Store", "Gym/Physical Fitness Center",
+    "Beauty Salon", "Barber's", "Bookstore", "Florist", "Author",
+    "Actor", "Comedian", "Dance Studio", "Yoga Studio", "Art Gallery",
+    "Estate Agent", "Fitness Trainer", "Jewellery & Watches Shop",
     "Furniture Store", "Car Dealership",
 ]
 
@@ -377,33 +377,53 @@ def _page_create_after_create(page, uid):
             pass
         _human_type(page, name_box, name)
         page.wait_for_timeout(800)
-        category = os.environ.get("FB_PAGE_CATEGORY", "").strip() or random.choice(_PAGE_CATEGORIES)
-        with print_lock:
-            print(f"{CYAN}[Browser] Page {uid}: category '{category}'{WHITE}")
-        cat_box = page.get_by_role("combobox", name="Category (required)")
-        _human_click(page, cat_box)
-        _human_type(page, cat_box, category)
-        page.wait_for_timeout(800)
-        try:
-            _human_click(page, page.get_by_role("option", name=category).first)
-        except Exception:
+        _env_category = os.environ.get("FB_PAGE_CATEGORY", "").strip()
+        _cat_candidates = ([_env_category] if _env_category
+                           else random.sample(_PAGE_CATEGORIES, len(_PAGE_CATEGORIES)))
+        category = None
+        for _cat_try in _cat_candidates[:3]:
+            with print_lock:
+                print(f"{CYAN}[Browser] Page {uid}: category '{_cat_try}'{WHITE}")
+            cat_box = page.get_by_role("combobox", name="Category (required)")
             try:
-                _matched = None
-                for _o in page.get_by_role("option").all():
-                    try:
-                        _t = (_o.inner_text(timeout=2000) or "").strip()
-                    except Exception:
-                        continue
-                    if _t and category.lower() in _t.lower():
-                        _matched = _o
-                        break
-                if _matched is None:
-                    raise RuntimeError("no matching category option")
-                _human_click(page, _matched)
+                _human_click(page, cat_box)
+                cat_box.fill("")
             except Exception:
-                with print_lock:
-                    print(f"{YELLOW}[Browser] Page {uid}: category option not found - skipped (ID stays created){WHITE}")
-                return
+                pass
+            _human_type(page, cat_box, _cat_try)
+            # Wait for Facebook's suggestions to actually appear
+            _options = []
+            for _ in range(10):
+                try:
+                    _options = page.get_by_role("option").all()
+                    if _options:
+                        break
+                except Exception:
+                    pass
+                page.wait_for_timeout(500)
+            if not _options:
+                continue
+            _matched = None
+            for _o in _options:
+                try:
+                    _t = (_o.inner_text(timeout=2000) or "").strip()
+                except Exception:
+                    continue
+                if _t and _cat_try.lower() in _t.lower():
+                    _matched = _o
+                    break
+            if _matched is None:
+                _matched = _options[0]
+            try:
+                _human_click(page, _matched)
+                category = _cat_try
+                break
+            except Exception:
+                continue
+        if category is None:
+            with print_lock:
+                print(f"{YELLOW}[Browser] Page {uid}: category option not found - skipped (ID stays created){WHITE}")
+            return
         page.wait_for_timeout(600)
         bio = os.environ.get("FB_PAGE_BIO", "").strip()
         if bio:
