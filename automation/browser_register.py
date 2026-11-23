@@ -1201,8 +1201,6 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
         _rotation = _browser_type == "rotation"
         browser = None
         _is_cloak = False
-        if not _rotation:
-            browser, _is_cloak = launch_browser(p, _browser_type, headless=False)
         try:
             for idx, entry in enumerate(numbers, 1):
                 number, sms_url = _parse_number_entry(entry)
@@ -1214,10 +1212,14 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                     if sms_url:
                         print(f"{CYAN}SMS URL: {sms_url[:50]}...{WHITE}")
 
-                # Rotation: each ID gets the next browser in turn.
+                # Fresh browser per ID: rotation cycles the browsers,
+                # single mode relaunches the same browser - either way
+                # every ID gets a fresh launch (and a fresh seed).
                 if _rotation:
                     _bt = ROTATION_BROWSERS[(idx - 1) % len(ROTATION_BROWSERS)]
-                    browser, _is_cloak = launch_browser(p, _bt, headless=False)
+                else:
+                    _bt = _browser_type
+                browser, _is_cloak = launch_browser(p, _bt, headless=False)
 
                 # Fresh context per account (incognito-like).
                 # Each ID gets its own device identity (UA, viewport,
@@ -1283,8 +1285,8 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
                         context.close()
                     except Exception:
                         pass
-                    # Rotation: close this ID's browser too
-                    if _rotation and browser is not None:
+                    # Close this ID's browser (fresh launch per ID)
+                    if browser is not None:
                         try:
                             browser.close()
                         except Exception:
