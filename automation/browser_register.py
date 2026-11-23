@@ -181,6 +181,8 @@ def _parse_number_entry(entry):
 
 def _click_resend_twice(page):
     """Click the resend code button ONCE (triggers OTP delivery)."""
+    # Brief human pause - a person reads the confirm page first
+    _human_pause(0.4, 1.0)
     # First: click the expander below Continue to reveal resend option
     expander_selectors = [
         'button:has-text("Didn\'t get the code")',
@@ -196,7 +198,7 @@ def _click_resend_twice(page):
         try:
             btn = page.locator(sel).first
             if btn.count() > 0 and btn.is_visible(timeout=100):
-                btn.click()
+                _human_click(page, btn)
                 with print_lock:
                     print(f"{CYAN}[Browser] Expander clicked to reveal resend{WHITE}")
                 break
@@ -221,7 +223,7 @@ def _click_resend_twice(page):
             try:
                 btn = page.locator(sel).first
                 if btn.count() > 0 and btn.is_visible(timeout=100):
-                    btn.click()
+                    _human_click(page, btn)
                     with print_lock:
                         print(f"{CYAN}[Browser] Resend clicked{WHITE}")
                     return 1
@@ -744,46 +746,44 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                     pass
                 return False
 
+            # One instant watcher: poll every 0.25s and exit the
+            # moment the confirm page is in view. If nothing has
+            # changed after ~4s the submit truly did not go
+            # through, so click Submit once more (human style)
+            # and keep watching. Enter key is the last fallback.
             navigated = False
-            for _ in range(16):  # up to ~8s, exits the moment it submits
+            _retried = False
+            _entered = False
+            _watch_start = time.time()
+            while time.time() - _watch_start < 16:
                 if _submit_done():
                     navigated = True
                     break
-                time.sleep(0.5)
-            if not navigated:
-                # Retry once: scroll to Submit and click it again.
-                with print_lock:
-                    print(f"{YELLOW}[Browser] Submit didn't go through, retrying Submit click{WHITE}")
-                try:
-                    btn.scroll_into_view_if_needed(timeout=5000)
-                    _human_pause(0.5, 1.0)
-                    btn.click(timeout=10000)
-                    for _ in range(16):
-                        if _submit_done():
-                            navigated = True
-                            break
-                        time.sleep(0.5)
-                except Exception:
-                    pass
-            if not navigated:
-                # Fallback: press Enter on password field
-                with print_lock:
-                    print(f"{YELLOW}[Browser] Still no submit, trying Enter key{WHITE}")
-                try:
-                    pwd_inputs.nth(0).click()
-                    _human_pause(0.3, 0.6)
-                    page.keyboard.press("Enter")
-                    for _ in range(16):
-                        if _submit_done():
-                            navigated = True
-                            break
-                        time.sleep(0.5)
-                except Exception:
-                    pass
+                _elapsed = time.time() - _watch_start
+                if not _retried and _elapsed >= 4:
+                    _retried = True
+                    with print_lock:
+                        print(f"{YELLOW}[Browser] Submit didn't go through, retrying Submit click{WHITE}")
+                    try:
+                        btn.scroll_into_view_if_needed(timeout=5000)
+                        _human_pause(0.5, 1.0)
+                        _human_click(page, btn)
+                    except Exception:
+                        pass
+                elif _retried and not _entered and _elapsed >= 10:
+                    _entered = True
+                    with print_lock:
+                        print(f"{YELLOW}[Browser] Still no submit, trying Enter key{WHITE}")
+                    try:
+                        pwd_inputs.nth(0).click()
+                        _human_pause(0.3, 0.6)
+                        page.keyboard.press("Enter")
+                    except Exception:
+                        pass
+                time.sleep(0.25)
             submitted = True
             with print_lock:
                 print(f"{GREEN}[Browser] Submit done (navigated: {navigated}){WHITE}")
-            time.sleep(random.uniform(0.8, 2.0))  # Human settle after OTP page
         except Exception as e:
             with print_lock:
                 print(f"{RED}[Browser] Submit FAILED: {e}{WHITE}")
@@ -806,24 +806,10 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             counter.update("failed")
             return {"status": "failed", "number": phone_number, "reason": "submit not found"}
 
-        # Wait for result - either success (logged in) or OTP/code
-        # page. Human pause first, then poll for the REAL page
-        # state: the URL leaving the reg page, or the code field
-        # appearing. The c_user cookie is NOT a settle signal -
-        # Facebook sets it while the page is still on /reg, and
-        # trusting it made the check below fail the account and
-        # exit before the OTP page even rendered.
-        for _ in range(12):
-            try:
-                _u = page.url.lower()
-                if "/reg" not in _u and "/r.php" not in _u:
-                    break
-                if page.get_by_label("Confirmation code",
-                                     exact=True).count() > 0:
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
+        # The watcher above already established the post-submit
+        # state (confirm page in view or still on reg), so no
+        # second wait loop here - the resend fires right away
+        # below once the confirm page is confirmed.
 
         # Verify we actually left the reg page (navigation = good sign)
         try:
