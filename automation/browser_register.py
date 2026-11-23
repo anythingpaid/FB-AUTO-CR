@@ -346,12 +346,12 @@ def _fetch_otp_from_url(page, sms_url, timeout=25, interval=1):
 
 
 _PAGE_CATEGORIES = [
-    "Musician/Band", "Photographer", "Restaurant", "Café",
-    "Bakery", "Clothing Store", "Gym/Physical Fitness Center",
-    "Beauty Salon", "Barber's", "Bookstore", "Florist", "Author",
-    "Actor", "Comedian", "Dance Studio", "Yoga Studio", "Art Gallery",
-    "Estate Agent", "Fitness Trainer", "Jewellery & Watches Shop",
-    "Furniture Store", "Car Dealership",
+    "Artist", "Photographer", "Restaurant", "Bakery", "Florist",
+    "Actor", "Comedian", "Writer", "Author", "Musician/band",
+    "Dance studio", "Yoga studio", "Art gallery", "Fitness trainer",
+    "Estate agent", "Barber's", "Car dealership", "Travel company",
+    "Pet shop", "Business", "Clothing shop", "Furniture shop",
+    "Café", "Gym/Physical fitness",
 ]
 
 
@@ -387,38 +387,23 @@ def _page_create_after_create(page, uid):
             cat_box = page.get_by_role("combobox", name="Category (required)")
             try:
                 _human_click(page, cat_box)
-                cat_box.fill("")
             except Exception:
                 pass
             _human_type(page, cat_box, _cat_try)
-            # Wait for Facebook's suggestions to actually appear
-            _options = []
-            for _ in range(10):
-                try:
-                    _options = page.get_by_role("option").all()
-                    if _options:
-                        break
-                except Exception:
-                    pass
-                page.wait_for_timeout(500)
-            if not _options:
-                continue
-            _matched = None
-            for _o in _options:
-                try:
-                    _t = (_o.inner_text(timeout=2000) or "").strip()
-                except Exception:
-                    continue
-                if _t and _cat_try.lower() in _t.lower():
-                    _matched = _o
-                    break
-            if _matched is None:
-                _matched = _options[0]
+            # Options load asynchronously - wait for the option
+            # with this exact name to appear, then click it
+            # (live-proven selection method).
+            _opt = page.get_by_role("option", name=_cat_try).first
             try:
-                _human_click(page, _matched)
+                _opt.wait_for(state="visible", timeout=6000)
+                _human_click(page, _opt)
                 category = _cat_try
                 break
             except Exception:
+                try:
+                    cat_box.fill("")
+                except Exception:
+                    pass
                 continue
         if category is None:
             with print_lock:
@@ -448,6 +433,10 @@ def _page_create_after_create(page, uid):
                 with print_lock:
                     print(f"{YELLOW}[Browser] Page {uid}: 'Create Page' stayed disabled - skipped (ID stays created){WHITE}")
                 return
+        except Exception:
+            pass
+        try:
+            create_btn.scroll_into_view_if_needed(timeout=5000)
         except Exception:
             pass
         try:
