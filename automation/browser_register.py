@@ -542,6 +542,7 @@ def _page_create_after_create(page, uid):
             pass
         with print_lock:
             print(f"{GREEN}[Browser] Page {uid}: created '{name}' ({page_url}) - profile open verified{WHITE}")
+        return True
     except Exception as e:
         with print_lock:
             print(f"{YELLOW}[Browser] Page {uid}: error ({e}) - ID stays created{WHITE}"[:160])
@@ -977,8 +978,9 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             if counter:
                 counter.update("success")
 
+            _page_ok = False
             if PAGE_CREATE_MODE == "id+page":
-                _page_create_after_create(page, c_user)
+                _page_ok = _page_create_after_create(page, c_user)
 
             return {
                 "status": "success",
@@ -986,6 +988,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                 "password": password,
                 "cookies": cookie_str,
                 "result_line": result,
+                "page_created": bool(_page_ok),
             }
 
         # Check if OTP/code page appeared (or we're on confirm page)
@@ -1143,8 +1146,9 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                                 "result_line": f"{c_user}|{password}|{cookie_str}",
                                 "reason": "profile_verification_pending",
                             }
+                        _page_ok = False
                         if PAGE_CREATE_MODE == "id+page":
-                            _page_create_after_create(page, c_user)
+                            _page_ok = _page_create_after_create(page, c_user)
 
                         return {
                             "status": "success",
@@ -1152,6 +1156,7 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                             "password": password,
                             "cookies": cookie_str,
                             "result_line": f"{c_user}|{password}|{cookie_str}",
+                            "page_created": bool(_page_ok),
                         }
                 except Exception as e:
                     with print_lock:
@@ -1306,13 +1311,14 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                         # Save to output (same format as HTTP version).
                         # ONLY fully confirmed accounts whose profile
                         # opened are saved - never pending ones.
-                        # ID+Page accounts go to their OWN file -
-                        # never mixed into the ID-only file.
+                        # Accounts whose Page was actually created
+                        # go to the ID+Page file; the rest go to
+                        # the ID-only file.
                         from core.path_manager import get_output_dir
                         output_dir = get_output_dir()
                         os.makedirs(output_dir, exist_ok=True)
                         _save_file = ("id_page_accounts.txt"
-                                      if PAGE_CREATE_MODE == "id+page"
+                                      if result.get("page_created")
                                       else "browser_accounts.txt")
                         with open(os.path.join(output_dir, _save_file), "a") as f:
                             f.write(result["result_line"] + "\n")
@@ -1355,7 +1361,7 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                                 output_dir = get_output_dir()
                                 os.makedirs(output_dir, exist_ok=True)
                                 _save_file = ("id_page_accounts.txt"
-                                              if PAGE_CREATE_MODE == "id+page"
+                                              if result.get("page_created")
                                               else "browser_accounts.txt")
                                 with open(os.path.join(output_dir, _save_file), "a") as f:
                                     f.write(result["result_line"] + "\n")
