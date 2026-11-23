@@ -150,15 +150,21 @@ def _launch_chromium126(p, headless, extra_args):
     return browser, False
 
 
-def _launch_clearcote(headless):
+def _launch_clearcote(p, headless, extra_args):
     try:
-        from clearcote import launch as _cc_launch
+        from clearcote import executable_path as _cc_executable_path
     except ImportError:
         raise RuntimeError(
             "Clearcote is not installed. Run: pip install clearcote"
         )
+    _exe = _cc_executable_path()
     _seed = random.randint(1, 2**31 - 1)
-    browser = _cc_launch(headless=headless, fingerprint=_seed)
+    args = [f"--fingerprint={_seed}"]
+    if extra_args:
+        args = args + list(extra_args)
+    browser = p.chromium.launch(
+        executable_path=_exe, headless=headless, args=args
+    )
     print(f"[Browser] Clearcote launched (seed {_seed})")
     return browser, True
 
@@ -180,16 +186,66 @@ def _launch_fingerprint(p, headless, extra_args):
     return browser, True
 
 
-def _launch_apostate(headless):
+def _find_apostate():
+    """Return the Apostate chrome.exe path, or None."""
+    import os
+
+    _roots = []
+    _local = os.environ.get("LOCALAPPDATA")
+    if _local:
+        _roots.append(Path(_local) / "apostate")
+    _roots.append(Path.home() / ".cache" / "apostate")
+    for _root in _roots:
+        if _root.exists():
+            for _candidate in sorted(_root.rglob("chrome.exe")):
+                return str(_candidate)
+    return None
+
+
+def _ensure_apostate():
+    """Return the Apostate chrome.exe path, downloading the build
+    automatically on first run (python -m apostate install).
+    Raises RuntimeError if the install fails."""
+    _exe = _find_apostate()
+    if _exe:
+        return _exe
     try:
-        from apostate import launch as _ap_launch
+        import apostate  # noqa: F401
     except ImportError:
         raise RuntimeError(
             "Apostate is not installed. Run: pip install apostate"
         )
+    import subprocess
+    import sys
+
+    print("[Browser] Apostate not found - downloading it now (one time, ~180 MB)...")
+    _result = subprocess.run(
+        [sys.executable, "-m", "apostate", "install"],
+        capture_output=True,
+        text=True,
+    )
+    _exe = _find_apostate()
+    if not _exe:
+        raise RuntimeError(
+            "Apostate automatic download failed. "
+            "Check your internet connection and run again. "
+            f"Installer said: {(_result.stderr or _result.stdout or '')[-300:]}"
+        )
+    print("[Browser] Apostate ready")
+    return _exe
+
+
+def _launch_apostate(p, headless, extra_args):
+    _exe = _ensure_apostate()
     _seed = random.randint(1, 2**31 - 1)
-    browser = _ap_launch(
-        headless=headless, fingerprint=_seed, fingerprint_platform="windows"
+    args = [
+        f"--fingerprint={_seed}",
+        "--fingerprint-platform=windows",
+    ]
+    if extra_args:
+        args = args + list(extra_args)
+    browser = p.chromium.launch(
+        executable_path=_exe, headless=headless, args=args
     )
     print(f"[Browser] Apostate launched (seed {_seed})")
     return browser, True
@@ -234,9 +290,9 @@ def launch_browser(p, browser_type="chromium126", headless=False, extra_args=Non
     if _bt in ("chromium126", "chromium"):
         return _launch_chromium126(p, headless, extra_args)
     if _bt == "clearcote":
-        return _launch_clearcote(headless)
+        return _launch_clearcote(p, headless, extra_args)
     if _bt == "fingerprint":
         return _launch_fingerprint(p, headless, extra_args)
     if _bt == "apostate":
-        return _launch_apostate(headless)
+        return _launch_apostate(p, headless, extra_args)
     raise RuntimeError(f"Unknown browser type: {browser_type}")
