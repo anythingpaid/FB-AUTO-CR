@@ -272,6 +272,43 @@ def _find_continue_button(page, timeout_s=12):
         time.sleep(0.5)
 
 
+def _show_profile_in_view(page, c_user):
+    """Open the profile, bring it to the front, and keep it in
+    view for a short human moment (3-5s, random, never more) so
+    the profile feed is actually seen before the next account."""
+    _hold = random.uniform(3.0, 5.0)
+    _start = time.time()
+    try:
+        if f"/{c_user}" not in page.url.lower():
+            page.goto(f"https://www.facebook.com/{c_user}",
+                      wait_until="domcontentloaded", timeout=30000)
+    except Exception:
+        pass
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+    # Let the feed render inside the hold window
+    while time.time() - _start < _hold:
+        try:
+            _ready = page.evaluate("""() => {
+                const m = document.querySelector('[role="main"]');
+                if (!m) return false;
+                const r = m.getBoundingClientRect();
+                return r.height > 200 && (m.innerText || '').trim().length > 50;
+            }""")
+            if _ready:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    _left = _hold - (time.time() - _start)
+    if _left > 0:
+        time.sleep(_left)
+    with print_lock:
+        print(f"{GREEN}[Browser] Profile feed shown ({_hold:.1f}s){WHITE}")
+
+
 def _fetch_otp_from_url(page, sms_url, timeout=25, interval=1):
     """
     Fetch OTP via HTTP requests (simple API endpoint).
@@ -908,19 +945,10 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             with print_lock:
                 print(f"{GREEN}[Browser] SUCCESS: {c_user}{WHITE}")
 
-            # Open the profile and keep it on screen briefly
-            # (2-3.5s) before finishing - the browser must not
-            # exit before the profile has opened.
-            try:
-                if f"/{c_user}" not in page.url.lower():
-                    page.goto(f"https://www.facebook.com/{c_user}",
-                              wait_until="domcontentloaded",
-                              timeout=30000)
-            except Exception:
-                pass
-            with print_lock:
-                print(f"{GREEN}[Browser] Profile open - holding 2-3.5s{WHITE}")
-            time.sleep(random.uniform(2.0, 3.5))
+            # Open the profile and keep it in view - the tool
+            # must not move to the next account before the
+            # profile feed has actually been seen on screen.
+            _show_profile_in_view(page, c_user)
 
             if counter:
                 counter.update("success")
@@ -1065,13 +1093,12 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                                 _profile_ok = True
                                 with print_lock:
                                     print(f"{GREEN}[Browser] Profile opened OK{WHITE}")
-                            # Profile is open: keep it on screen
-                            # briefly (2-3.5s) before finishing -
-                            # the browser must not exit earlier.
+                            # Profile is open: bring the profile
+                            # feed into view and hold it there -
+                            # never move to the next account
+                            # before it has been seen on screen.
                             if _profile_ok:
-                                with print_lock:
-                                    print(f"{GREEN}[Browser] Profile open - holding 2-3.5s{WHITE}")
-                                time.sleep(random.uniform(2.0, 3.5))
+                                _show_profile_in_view(page, c_user)
                         except Exception as e:
                             with print_lock:
                                 print(f"{YELLOW}[Browser] Profile open skipped: {e}{WHITE}")
