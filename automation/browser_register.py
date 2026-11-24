@@ -796,32 +796,58 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                 except Exception:
                     pass
                 return False
+            def _submit_in_flight():
+                # True while the first submit is still being
+                # processed: Submit disabled, a spinner showing,
+                # or the reg POST already answered (the request
+                # reached Facebook - a second click cannot help).
+                try:
+                    if _reg_responses:
+                        return True
+                    _sb = page.get_by_role("button", name="Submit", exact=True)
+                    if _sb.count() > 0 and not _sb.first.is_enabled():
+                        return True
+                    if page.locator('[role="progressbar"], .spinner').count() > 0:
+                        return True
+                except Exception:
+                    pass
+                return False
 
             # One instant watcher: poll every 0.25s and exit the
-            # moment the confirm page is in view. If nothing has
-            # changed after ~4s the submit truly did not go
-            # through, so click Submit once more (human style)
-            # and keep watching. Enter key is the last fallback.
+            # moment the confirm page is in view. A retry happens
+            # only when nothing is in flight (no reg POST answer,
+            # Submit enabled, no spinner) and 8s passed with no
+            # signal - on slow net the first submit is still
+            # processing, so no double-submit. Total wait 20s.
+            # Enter key is the last fallback.
             navigated = False
             _retried = False
             _entered = False
             _watch_start = time.time()
-            while time.time() - _watch_start < 16:
+            while time.time() - _watch_start < 20:
                 if _submit_done():
                     navigated = True
                     break
                 _elapsed = time.time() - _watch_start
-                if not _retried and _elapsed >= 4:
+                if not _retried and _elapsed >= 8 and not _submit_in_flight():
                     _retried = True
                     with print_lock:
                         print(f"{YELLOW}[Browser] Submit didn't go through, retrying Submit click{WHITE}")
                     try:
-                        btn.scroll_into_view_if_needed(timeout=5000)
-                        _human_pause(0.5, 1.0)
-                        _human_click(page, btn)
-                    except Exception:
-                        pass
-                elif _retried and not _entered and _elapsed >= 10:
+                        _rbtn = page.get_by_role("button", name="Submit", exact=True)
+                        if _rbtn.count() > 0 and _rbtn.first.is_visible() and _rbtn.first.is_enabled():
+                            _rbtn.first.scroll_into_view_if_needed(timeout=5000)
+                            _human_pause(0.5, 1.0)
+                            _human_click(page, _rbtn.first)
+                            with print_lock:
+                                print(f"{GREEN}[Browser] Submit retry clicked{WHITE}")
+                        else:
+                            with print_lock:
+                                print(f"{YELLOW}[Browser] Submit retry skipped - button not clickable{WHITE}")
+                    except Exception as _re:
+                        with print_lock:
+                            print(f"{YELLOW}[Browser] Submit retry failed: {_re}{WHITE}")
+                elif _retried and not _entered and _elapsed >= 14 and not _submit_in_flight():
                     _entered = True
                     with print_lock:
                         print(f"{YELLOW}[Browser] Still no submit, trying Enter key{WHITE}")
@@ -901,6 +927,8 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
                 with print_lock:
                     print(f"{RED}[Browser] Still on reg page. Errors: {errors}{WHITE}")
                     print(f"{RED}[Browser] Reg responses: {_reg_responses}{WHITE}")
+                    if _reg_responses:
+                        print(f"{RED}[Browser] Reg POST answered but page stayed on reg - server hold, not a missed click{WHITE}")
                 # Facebook's errors for this form do not reliably
                 # emit [role=alert]/aria-invalid, so also dump the
                 # combobox texts, field values and any visible
