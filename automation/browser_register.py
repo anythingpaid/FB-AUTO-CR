@@ -1227,8 +1227,35 @@ def _random_context_kwargs(browser):
         "viewport": random.choice(_viewports),
         "locale": "en-US",
         "timezone_id": random.choice(_timezones),
-        "color_scheme": "light",
+                "color_scheme": "light",
     }
+
+
+def _block_heavy_requests(context):
+    """Slow-net speed: abort video/audio (media) and third-party
+    tracking requests. Images, fonts and CSS keep loading, so the
+    page looks and behaves exactly like a normal browser."""
+    _TRACK_HOSTS = ("google-analytics.com", "googletagmanager.com",
+                    "doubleclick.net", "facebook.com/tr/")
+    def _handler(route):
+        try:
+            _req = route.request
+            if _req.resource_type == "media":
+                route.abort()
+                return
+            if any(_h in _req.url for _h in _TRACK_HOSTS):
+                route.abort()
+                return
+        except Exception:
+            pass
+        try:
+            route.continue_()
+        except Exception:
+            pass
+    try:
+        context.route("**/*", _handler)
+    except Exception:
+        pass
 
 
 def _run_browser_mode_session(numbers, password_config, counter, page_mode, _browser_type, _start_idx, _progress):
@@ -1316,6 +1343,7 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                     context = browser.new_context(**_ctx_kwargs)
                     with print_lock:
                         print(f"{CYAN}[Browser] Device: {_ctx_kwargs['viewport']['width']}x{_ctx_kwargs['viewport']['height']} | {_ctx_kwargs['timezone_id']}{WHITE}")
+                                _block_heavy_requests(context)
                 page = context.new_page()
 
                 try:
