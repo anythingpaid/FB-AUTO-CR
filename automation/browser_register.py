@@ -1227,7 +1227,7 @@ def _random_context_kwargs(browser):
         "viewport": random.choice(_viewports),
         "locale": "en-US",
         "timezone_id": random.choice(_timezones),
-                "color_scheme": "light",
+        "color_scheme": "light",
     }
 
 
@@ -1322,8 +1322,7 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                     if "connection closed" in _err_text or "driver" in _err_text:
                         # The Playwright driver itself is dead -
                         # this session cannot recover. Stop here;
-                        # the wrapper restarts and resumes at this
-                        # same account (launch never happened, so
+                        # the wrapper restarts and resumes at thi# same account (launch never happened, so
                         # the number is not burned).
                         _resume_from = idx - 1
                         break
@@ -1343,7 +1342,7 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                     context = browser.new_context(**_ctx_kwargs)
                     with print_lock:
                         print(f"{CYAN}[Browser] Device: {_ctx_kwargs['viewport']['width']}x{_ctx_kwargs['viewport']['height']} | {_ctx_kwargs['timezone_id']}{WHITE}")
-                                _block_heavy_requests(context)
+                _block_heavy_requests(context)
                 page = context.new_page()
 
                 try:
