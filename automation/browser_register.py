@@ -1322,7 +1322,8 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                     if "connection closed" in _err_text or "driver" in _err_text:
                         # The Playwright driver itself is dead -
                         # this session cannot recover. Stop here;
-                        # the wrapper restarts and resumes at thi# same account (launch never happened, so
+                        # the wrapper restarts and resumes at this
+                        # same account (launch never happened, so
                         # the number is not burned).
                         _resume_from = idx - 1
                         break
