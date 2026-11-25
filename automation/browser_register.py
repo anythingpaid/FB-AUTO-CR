@@ -1392,6 +1392,16 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                                       else "browser_accounts.txt")
                         with open(os.path.join(output_dir, _save_file), "a") as f:
                             f.write(result["result_line"] + "\n")
+                        # Backup copy: if the main save file is ever
+                        # overwritten from an editor while the tool
+                        # runs, the appended lines would be lost -
+                        # the backup keeps every saved ID safe.
+                        try:
+                            _backup_file = _save_file.replace(".txt", "_backup.txt")
+                            with open(os.path.join(output_dir, _backup_file), "a") as f:
+                                f.write(result["result_line"] + "\n")
+                        except Exception:
+                            pass
 
                 except Exception as e:
                     with print_lock:
@@ -1435,6 +1445,12 @@ def _run_browser_mode_session(numbers, password_config, counter, page_mode, _bro
                                               else "browser_accounts.txt")
                                 with open(os.path.join(output_dir, _save_file), "a") as f:
                                     f.write(result["result_line"] + "\n")
+                                try:
+                                    _backup_file = _save_file.replace(".txt", "_backup.txt")
+                                    with open(os.path.join(output_dir, _backup_file), "a") as f:
+                                        f.write(result["result_line"] + "\n")
+                                except Exception:
+                                    pass
                         except Exception as e2:
                             with print_lock:
                                 print(f"{RED}[Browser] Retry failed: {e2}{WHITE}")
