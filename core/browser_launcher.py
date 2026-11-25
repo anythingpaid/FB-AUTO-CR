@@ -85,13 +85,23 @@ def _ensure_chromium126():
     return _exe
 
 
+_FP_EXE_CACHE = [None]
+
+
 def _find_fingerprint_chromium():
-    """Return the fingerprint-chromium chrome.exe path, or None."""
+    """Return the fingerprint-chromium chrome.exe path, or None.
+    The found path is cached for the process: the extracted tree
+    is large, and walking it on every launch made the browser
+    slow to open."""
+    if _FP_EXE_CACHE[0]:
+        return _FP_EXE_CACHE[0]
     if not _FP_DIR.exists():
         return None
-    for _candidate in sorted(_FP_DIR.rglob("chrome.exe")):
-        return str(_candidate)
-    return None
+    _candidate = next(_FP_DIR.rglob("chrome.exe"), None)
+    if _candidate is None:
+        return None
+    _FP_EXE_CACHE[0] = str(_candidate)
+    return _FP_EXE_CACHE[0]
 
 
 def _ensure_fingerprint_chromium():
@@ -176,6 +186,11 @@ def _launch_fingerprint(p, headless, extra_args):
         f"--fingerprint={_seed}",
         "--fingerprint-platform=windows",
         "--fingerprint-brand=Chrome",
+        "--no-first-run",
+        "--disable-default-apps",
+        "--disable-background-networking",
+        "--disable-component-update",
+        "--mute-audio",
     ]
     if extra_args:
         args = args + list(extra_args)
