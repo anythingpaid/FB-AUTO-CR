@@ -909,6 +909,31 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             with print_lock:
                 print(f"{CYAN}[Browser] After navigation URL: {current_url}{WHITE}")
 
+        # Settle poll: the watcher can exit on the weak
+        # "Submit button gone" signal while Facebook is still
+        # navigating to the confirm page. Wait until the
+        # confirm/success state is actually in view before
+        # judging the ID - a single instant check used to fail
+        # IDs whose confirm page was already on its way (the
+        # page was still loading when the check ran).
+        _settle_start = time.time()
+        while time.time() - _settle_start < 10:
+            try:
+                _u = page.url
+            except Exception:
+                _u = ""
+            try:
+                _cf = page.get_by_label("Confirmation code", exact=True).count() > 0
+            except Exception:
+                _cf = False
+            if _cf or "confirmemail" in _u or "checkpoint" in _u or "confirm" in _u:
+                current_url = _u
+                break
+            if _u and "/reg" not in _u and "/r.php" not in _u:
+                current_url = _u
+                break
+            time.sleep(0.25)
+
         _has_code_field = False
         try:
             _has_code_field = page.get_by_label("Confirmation code", exact=True).count() > 0
