@@ -818,13 +818,13 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             # only when nothing is in flight (no reg POST answer,
             # Submit enabled, no spinner) and 8s passed with no
             # signal - on slow net the first submit is still
-            # processing, so no double-submit. Total wait 20s.
+            # processing, so no double-submit. Total wait 23.5s.
             # Enter key is the last fallback.
             navigated = False
             _retried = False
             _entered = False
             _watch_start = time.time()
-            while time.time() - _watch_start < 20:
+            while time.time() - _watch_start < 23.5:
                 if _submit_done():
                     navigated = True
                     break
