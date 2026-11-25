@@ -21,9 +21,16 @@ gender (About page first, first name second). No generation of
 any kind runs in this mode.
 """
 
+import base64
+import json
 import os
+import random
 import re
+import secrets
 import time
+import urllib.parse
+import urllib.request
+from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
@@ -55,6 +62,574 @@ DEFAULT_DP_MARKERS = ("silhouette", "static.xx", "empty-profile", "default")
 
 # --- accounts file (format: uid|password|cookies, one per line) ---
 
+
+DP_COUNTRY = "US"
+DP_GENERATED_DIR = Path(dp_pics_dir()) / "generated"
+DP_GEN_MIN_BYTES = 10000
+DP_HORDE_TIMEOUT_S = 150
+
+
+_DP_COUNTRY_STYLE = {
+    "US": {"people": "American", "hair": "brown",
+           "skins": ("fair skin", "light skin", "fair skin",
+                     "light-medium skin"),
+           "street": "busy American city street",
+           "market": "American farmers market",
+           "landmark": "New York Brooklyn Bridge promenade with the Manhattan skyline",
+           "clothes_f": "casual smart clothes",
+           "market_clothes": "colorful casual shirt"},
+    "UK": {"people": "British", "hair": "dark brown",
+           "skins": ("fair skin", "fair skin", "light skin", "fair skin"),
+           "street": "busy London street",
+           "market": "London street market",
+           "landmark": "London South Bank Thames riverside with Tower Bridge",
+           "clothes_f": "casual smart clothes",
+           "market_clothes": "colorful casual shirt"},
+    "IN": {"people": "Indian", "hair": "black",
+           "skins": ("fair skin", "wheatish skin", "medium-brown skin",
+                     "dusky skin"),
+           "street": "busy Indian street",
+           "market": "vibrant Indian market",
+           "landmark": "Kolkata Hooghly riverfront promenade with the Howrah Bridge",
+           "clothes_f": "kurta or casual Indian street clothes",
+           "market_clothes": "colorful kurta"},
+    "EU": {"people": "European", "hair": "brown",
+           "skins": ("fair skin", "light skin", "fair skin", "light skin"),
+           "street": "busy European city street",
+           "market": "European street market",
+           "landmark": "Paris Seine riverside with the Eiffel Tower",
+           "clothes_f": "casual smart clothes",
+            "market_clothes": "colorful casual shirt"},
+    "AU": {"people": "Australian", "hair": "light brown",
+           "skins": ("fair skin", "sun-kissed skin", "fair skin",
+                     "light skin"),
+           "street": "busy Australian city street",
+           "market": "Australian weekend market",
+           "landmark": "Sydney Circular Quay harbour with the Opera House and Harbour Bridge",
+           "clothes_f": "casual smart clothes",
+           "market_clothes": "colorful casual shirt"},
+    "SG": {"people": "Singaporean", "hair": "black",
+           "skins": ("fair skin", "light-medium skin", "fair skin",
+                     "light skin"),
+           "street": "busy Singapore street",
+           "market": "Singapore street market",
+           "landmark": "Singapore Marina Bay promenade with Marina Bay Sands",
+           "clothes_f": "casual smart clothes",
+           "market_clothes": "colorful casual shirt"},
+}
+
+
+_DP_FACE_STRICT = (
+    "natural realistic face, two open eyes both fully formed, one straight correctly proportioned nose, two complete ears both fully formed and fully visible, slight natural asymmetry like a real person's face, real skin texture with visible pores, natural skin imperfections, slight blemishes, all facial features complete, nothing missing, nothing deformed, nothing distorted, not plastic skin, not a mask-like face, not airbrushed, no beauty filter, no skin smoothing, not doll-like")
+
+
+_FACE_VAR_M = (
+    "oval face, deep-set eyes, thick eyebrows, straight nose",
+    "square face, strong cheekbones, sharp eyes, defined jawline",
+    "round face, warm eyes, full lips, gentle smile",
+    "angular face, prominent nose, arched eyebrows, slight smile",
+    "long face, almond-shaped eyes, high cheekbones, neutral expression",
+    "heart-shaped face, large eyes, straight eyebrows, dimples when smiling",
+    "wide jaw, deep-set eyes, thick eyebrows, a small mole on the cheek",
+    "narrow face, sharp eyes, straight nose, cleft chin",
+    "oval face, hooded eyes, strong cheekbones, full lips",
+    "square face, warm eyes, arched eyebrows, freckles across the nose",
+    "round face, large eyes, thick eyebrows, high cheekbones",
+    "angular face, deep-set eyes, prominent nose, slight smile",
+)
+
+
+_FACE_VAR_F = (
+    "oval face, large almond-shaped eyes, arched eyebrows, full lips",
+    "round face, warm eyes, gentle smile, dimples",
+    "heart-shaped face, deep-set eyes, high cheekbones, straight nose",
+    "square face, sharp eyes, defined cheekbones, gentle smile",
+    "long face, almond-shaped eyes, arched eyebrows, a small mole on the cheek",
+    "oval face, large eyes, thick eyebrows, full lips",
+    "round face, warm eyes, freckles across the nose, gentle smile",
+    "heart-shaped face, deep-set eyes, high cheekbones, neutral expression",
+    "square face, almond-shaped eyes, straight eyebrows, dimples",
+    "long face, large eyes, arched eyebrows, full lips",
+    "oval face, warm eyes, high cheekbones, a small mole on the chin",
+    "round face, deep-set eyes, thick eyebrows, gentle smile",
+)
+
+
+_DP_PERSONA_M = (
+    "32-year-old man with a short black beard and mustache, round face, thick eyebrows, warm friendly smile",
+    "29-year-old man with thin round glasses, long narrow face, clean-shaven, side-parted hair, calm neutral expression",
+    "34-year-old man with thick curly hair, square jaw face, light stubble beard, freckles across the nose, slight smile",
+    "30-year-old man with a short boxed beard, oval face, deep-set eyes, straight nose, relaxed smile",
+    "36-year-old man, clean-shaven, broad face, short grey-flecked hair, gentle smile",
+    "28-year-old man with a light stubble beard, long face, prominent cheekbones, wavy dark hair, neutral expression",
+)
+
+
+_DP_PERSONA_F = (
+    "30-year-old woman with long straight black hair, oval face, soft smile",
+    "28-year-old woman with shoulder-length curly brown hair, round face, freckles, warm smile",
+    "33-year-old woman with a short bob haircut, heart-shaped face, gentle smile",
+    "31-year-old woman with long wavy blonde hair, long face, calm expression",
+    "29-year-old woman with black hair in a low ponytail, square face, thick eyebrows, friendly smile",
+    "35-year-old woman with short pixie hair, oval face, subtle smile",
+)
+
+
+_CLOTHES_M = (
+    "wearing a charcoal button-up shirt and blue jeans",
+    "wearing a white t-shirt and black jeans",
+    "wearing a blue checked shirt and dark jeans",
+    "wearing a black polo shirt and charcoal trousers",
+    "wearing a navy blue shirt and beige chinos",
+    "wearing a green casual shirt and blue jeans",
+    "wearing a maroon button-up shirt and black jeans",
+    "wearing a light blue shirt and dark trousers",
+)
+
+
+_CLOTHES_F = (
+    "wearing a white kurta and white pajama",
+    "wearing a floral summer dress",
+    "wearing a red blouse and blue jeans",
+    "wearing a black top and white trousers",
+    "wearing a pink kurta and leggings",
+    "wearing a green dress",
+    "wearing a blue shirt and jeans",
+    "wearing a yellow top and black pants",
+)
+
+
+_DP_NEGATIVE_PROMPT = (
+    "deformed, distorted, disfigured, bad anatomy, missing eye, missing eyes, extra eye, extra eyes, missing ear, missing ears, extra ear, deformed ear, broken ear, long nose, missing nose, deformed nose, extra nose, asymmetric face, asymmetric eyes, crossed eyes, closed eyes, duplicate face, mutated, blurry, out of focus, low quality, watermark, text, logo, cartoon, painting, illustration, ugly, split image, diptych, collage, side profile, back view")
+
+
+_HORDE_ANON_KEY = "0000000000"
+
+
+_POLLINATIONS_API_TOKEN_XOR = "KTEFLRAKDzQOaW9pA2xtGwtjLxMyMQsWHRYzAyA5DisUNTU="
+
+
+_DP_LAST_PIC = [None]
+
+
+_DP_LAST_GEN_ERROR = [""]
+def _dp_horde_apikey():
+    """AI Horde key: a registered key from env AIHORDE_API_KEY
+    (free registration, no card — slightly better queue priority),
+    else the anonymous key. Both are watermark-free."""
+    _k = os.environ.get("AIHORDE_API_KEY", "").strip()
+    return _k or _HORDE_ANON_KEY
+
+_CLOUDFLARE_XOR_KEY = 0x5A
+_CLOUDFLARE_ACCOUNT_ID_XOR = "P2M5bWk8O21tbm4+OW9uOWI7aTtiP21jbGlqOWJrbm8="
+_CLOUDFLARE_API_TOKEN_XOR = "OTwvLgUxPSMRHBwIEDsRGygubTYeMDMDKA5rFSwxHwouEmssFRMYHAIxFywIOWNia205bGo="
+
+
+_POLLINATIONS_XOR_KEY = 0x5A
+
+
+def _pollinations_baked_token():
+    """Decode the baked-in Pollinations API token. Returns the
+    token or None when undecodable."""
+    try:
+        import base64
+        return bytes(
+            b ^ _POLLINATIONS_XOR_KEY
+            for b in base64.b64decode(_POLLINATIONS_API_TOKEN_XOR)
+        ).decode("ascii") or None
+    except Exception:
+        return None
+
+
+def _cloudflare_baked_creds():
+    """Decode the baked-in Cloudflare credentials (Account ID + API
+    token). Returns (account_id, token) or (None, None) when
+    undecodable. Mirrors _pollinations_baked_token (same base64 +
+    single-byte XOR 0x5A pattern)."""
+    try:
+        import base64
+        _aid = bytes(
+            b ^ _CLOUDFLARE_XOR_KEY
+            for b in base64.b64decode(_CLOUDFLARE_ACCOUNT_ID_XOR)
+        ).decode("ascii")
+        _tok = bytes(
+            b ^ _CLOUDFLARE_XOR_KEY
+            for b in base64.b64decode(_CLOUDFLARE_API_TOKEN_XOR)
+        ).decode("ascii")
+        return (_aid or None, _tok or None)
+    except Exception:
+        return (None, None)
+def _dp_pollinations_token():
+    """Pollinations API token: env POLLINATIONS_API_KEY, else
+    ~/.pollinations_api_key, else the BAKED-IN token (Afnan
+    2026-11-13 — permanent, no per-user setup). Returns the token
+    or None when no source yields one. A token is REQUIRED for a
+    watermark-free image; without one Pollinations watermarks."""
+    _tok = os.environ.get("POLLINATIONS_API_KEY", "").strip()
+    if not _tok:
+        try:
+            _tok = (Path.home() / ".pollinations_api_key").read_text().strip()
+        except Exception:
+            _tok = ""
+    if not _tok:
+        _tok = _pollinations_baked_token() or ""
+    return _tok or None
+def _dp_gen_providers():
+    """DP generation providers in fallback order (watermark-free
+    only). AI Horde first (registered key when AIHORDE_API_KEY is
+    set, else anonymous), then anonymous Horde if a registered key
+    was tried, then Pollinations klein (Bearer token, baked-in).
+    Pollinations is live-proven 2026-11-13: klein, 1024x1024 square,
+    private=true, no watermark with a token. Cloudflare
+    FLUX.1-schnell is DELIBERATELY NOT here: Afnan 2026-11-13
+    ("Istarha ki DPs mare accounts ko kha jain gi") — FLUX
+    portraits look obviously AI-generated and a detectable DP
+    risks the whole account being flagged/banned. A missing DP
+    ("no pic available") is safe; a fake-looking DP is not.
+    _dp_gen_cloudflare + the baked-in creds stay in the code
+    (unused) so Cloudflare can be re-enabled in one line."""
+    providers = [("AI Horde", lambda p: _dp_gen_horde(p))]
+    if _dp_horde_apikey() != _HORDE_ANON_KEY:
+        providers.append(
+            ("AI Horde (anonymous)",
+             lambda p: _dp_gen_horde(p, _HORDE_ANON_KEY)))
+    providers.append(("Pollinations", lambda p: _dp_gen_pollinations(p)))
+    return providers
+def _dp_gen_prompt(gender):
+    if gender not in ("male", "female"):
+        raise ValueError(f"_dp_gen_prompt: unknown gender {gender!r}")
+    if DP_COUNTRY not in _DP_COUNTRY_STYLE:
+        raise ValueError(f"_dp_gen_prompt: unknown country {DP_COUNTRY!r}")
+    style = _DP_COUNTRY_STYLE[DP_COUNTRY]
+    people = style["people"]
+    hc = style["hair"]
+    skins = style["skins"]
+    person = "man" if gender == "male" else "woman"
+    _is_male = (gender == "male")
+    _hm = ("short neat {hc} hair",
+           "textured medium-length {hc} hair",
+           "thick curly {hc} hair",
+           "side-parted {hc} hair",
+           "short textured {hc} hair",
+           "spiky textured {hc} hair",
+           "medium-length swept-back {hc} hair",
+           "short cropped {hc} hair")
+    _hf = ("shoulder-length straight {hc} hair",
+           "long wavy {hc} hair over one shoulder",
+           "thick curly {hc} hair tied back loosely",
+           "{hc} hair in a neat bun",
+           "shoulder-length wavy {hc} hair",
+           "curly shoulder-length {hc} hair",
+           "long straight {hc} hair with a center part",
+           "short bob-cut {hc} hair")
+    _hair = [(_hm[i] if _is_male else _hf[i]).format(hc=hc)
+             for i in range(8)]
+    _face = (f"{_DP_FACE_STRICT}, clearly {people} facial features, "
+             f"{random.choice(_FACE_VAR_M if _is_male else _FACE_VAR_F)}, "
+             "facing the camera directly, looking straight at the camera, "
+             "front-facing portrait, full face visible, both eyes looking at the camera, "
+             "one single person only in the frame, no split image, no diptych, "
+             "no collage, no side profile, no back view")
+    _geo = ("square frame, whole person centered, full body visible "
+            "from head to toe, camera about 4 meters away at waist "
+            "height, head near top of frame, feet near bottom of frame, "
+            "background on both sides, nothing cropped")
+    _cam = ("shot on iPhone, real smartphone photo, natural phone "
+            "camera look, deep depth of field, background and subject "
+            "both in focus, background people, shops, trees and objects "
+            "as sharp, clear and detailed as the person, same realism "
+            "throughout, no bokeh, no background blur, no shallow depth "
+            "of field, everything in focus from foreground to background, "
+            "soft overcast daylight, natural sensor noise, realistic "
+            "textures everywhere, no AI smoothness, no painterly "
+            "background")
+    _skin = ("natural unretouched skin, subtle pores, slight tonal "
+             "variation, flyaway hairs, small believable imperfections, "
+             "no makeup, natural bare lips, both eyes the same size")
+    _real = ("authentic real photograph, looks like a genuine candid "
+             "photo from a real person's phone gallery, not AI-generated, "
+             "not a digital render, not retouched, clear depth in three "
+             "layers — foreground, midground and background all in focus, "
+             "people at different distances, everything as detailed as "
+             "the person")
+    _who = random.choice(_DP_PERSONA_M if _is_male else _DP_PERSONA_F)
+    _clothes = random.choice(_CLOTHES_M if _is_male else _CLOTHES_F)
+    _act = ("sitting relaxed, natural posture, hands resting naturally",
+            "sitting at a desk, looking at a laptop naturally",
+            "sitting on a bench, relaxed, looking around naturally",
+            "standing naturally, relaxed posture, hands at sides")
+    variants = (
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[0]}, {_hair[0]}, {_act[0]}, {_geo}, {_cam}, {_skin}, {_real}, sitting in a modern hotel lobby, comfortable armchair, elegant interior with warm lights and people around, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[1]}, {_hair[1]}, {_act[1]}, {_geo}, {_cam}, {_skin}, {_real}, sitting at a desk in a modern office, laptop open, glass walls and desks in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[2]}, {_hair[2]}, {_act[2]}, {_geo}, {_cam}, {_skin}, {_real}, sitting on a bench in a green park, trees and walking paths in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[3]}, {_hair[3]}, {_act[0]}, {_geo}, {_cam}, {_skin}, {_real}, sitting at a table in a modern cafe, coffee cup on the table, warm lights and people around, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[0]}, {_hair[4]}, {_act[0]}, {_geo}, {_cam}, {_skin}, {_real}, sitting at a table in a modern restaurant, warm ambient lighting and tables in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[1]}, {_hair[5]}, {_act[3]}, {_geo}, {_cam}, {_skin}, {_real}, standing in a modern shopping mall, shops and people in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[2]}, {_hair[6]}, {_act[1]}, {_geo}, {_cam}, {_skin}, {_real}, sitting in a modern co-working space, desks and laptops around, people working in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[3]}, {_hair[7]}, {_act[3]}, {_geo}, {_cam}, {_skin}, {_real}, standing by a railing on a riverside promenade, hands in pockets, {style['landmark']}, people walking at different distances in the midground, river and landmark in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[0]}, {_hair[2]}, {_act[3]}, {_geo}, {_cam}, {_skin}, {_real}, standing on a busy modern city street, {style['street']} shops with signage and people in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
+    )
+    return random.choice(variants)
+
+
+def _dp_download_bytes(url, headers, timeout_s):
+    last_err = None
+    for _ in range(2):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                if getattr(resp, "status", 200) != 200:
+                    return None
+                return resp.read()
+        except Exception as e:
+            last_err = e
+            time.sleep(2)
+    print(f"  dp: download failed — {str(last_err)[:80]}")
+    return None
+
+
+def _dp_valid_image(data):
+    if not data or len(data) < DP_GEN_MIN_BYTES:
+        return False
+    return (data[:3] == b"\xff\xd8\xff"
+            or data[:8] == b"\x89PNG\r\n\x1a\n"
+            or data[:4] == b"RIFF")
+
+
+def _dp_gen_pollinations(prompt):
+    """Generate a DP via Pollinations (klein model, gen endpoint).
+    Watermark-free ONLY with a Bearer token (see
+    _dp_pollinations_token); anonymous calls are watermarked and
+    are never used here. Live-proven 2026-11-13: klein, 1024x1024
+    square (Facebook DP size, 1:1), private=true, random seed per
+    call (same prompt+seed returns the cached image). Returns
+    image bytes or None."""
+    token = _dp_pollinations_token()
+    if not token:
+        return None
+    try:
+        import urllib.parse
+        seed = random.randint(1, 999999)
+        url = ("https://gen.pollinations.ai/image/"
+               f"{urllib.parse.quote(prompt)}"
+               f"?model=klein&width=1024&height=1024&seed={seed}"
+               f"&private=true")
+        req = urllib.request.Request(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = resp.read(20 * 1024 * 1024)
+    except Exception as e:
+        _DP_LAST_GEN_ERROR[0] = "Pollinations failed"
+        print(f"  dp: Pollinations request failed — {str(e)[:80]}")
+        return None
+    if data and _dp_valid_image(data):
+        return data
+    _DP_LAST_GEN_ERROR[0] = "Pollinations returned no usable image"
+    print("  dp: Pollinations returned no usable image")
+    return None
+
+
+def _dp_gen_horde(prompt, apikey=None):
+
+    if apikey is None:
+        apikey = _dp_horde_apikey()
+    try:
+        payload = json.dumps({
+            "prompt": prompt + " ### " + _DP_NEGATIVE_PROMPT,
+            "params": {"width": 1024, "height": 1024, "steps": 25, "n": 1,
+                       "sampler_name": "k_euler", "cfg_scale": 7.0},
+            "nsfw": False, "censor_nsfw": False, "trusted_workers": False,
+            "models": ["Juggernaut XL"],
+        }).encode()
+        sub = None
+        last_err = None
+        for _submit_attempt in range(2):
+            try:
+                req = urllib.request.Request(
+                    "https://stablehorde.net/api/v2/generate/async",
+                    data=payload,
+                    headers={"Content-Type": "application/json",
+                             "apikey": apikey},
+                    method="POST")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    sub = json.loads(resp.read())
+                break
+            except Exception as e:
+                last_err = e
+                try:
+                    body = e.read().decode("utf-8", "ignore")[:200]
+                except Exception:
+                    body = ""
+                print(f"  dp: AI Horde submit failed "
+                    f"({str(e)[:60]}; body={body!r}) — "
+                    f"{'retrying once' if _submit_attempt == 0 else 'giving up'}")
+                time.sleep(2)
+        if sub is None:
+            _DP_LAST_GEN_ERROR[0] = "AI Horde submit failed"
+            print(f"  dp: AI Horde submit failed twice — {str(last_err)[:80]}")
+            return None
+        gid = (sub or {}).get("id")
+        if not gid:
+            _DP_LAST_GEN_ERROR[0] = "AI Horde gave no generation id"
+            print(f"  dp: AI Horde gave no generation id (response={str(sub)[:120]})")
+            return None
+        done = False
+        deadline = time.time() + DP_HORDE_TIMEOUT_S
+        while time.time() < deadline:
+            time.sleep(10)
+            req = urllib.request.Request(
+                f"https://stablehorde.net/api/v2/generate/check/{gid}",
+                headers={"apikey": apikey})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    st = json.loads(resp.read())
+            except Exception:
+                continue
+            if (st or {}).get("done"):
+                done = True
+                break
+        if not done:
+            _DP_LAST_GEN_ERROR[0] = "AI Horde timed out"
+            print("  dp: AI Horde timed out waiting for the image")
+            return None
+        req = urllib.request.Request(
+            f"https://stablehorde.net/api/v2/generate/status/{gid}",
+            headers={"apikey": apikey})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            fin = json.loads(resp.read())
+        gens = (fin or {}).get("generations") or []
+        if not gens:
+            _DP_LAST_GEN_ERROR[0] = "AI Horde finished with no image"
+            print("  dp: AI Horde finished with no image")
+            return None
+        img_url = gens[0].get("img")
+        if not img_url:
+            return None
+        data = _dp_download_bytes(
+            img_url, {"User-Agent": "Mozilla/5.0"}, 60)
+        if data and _dp_valid_image(data):
+            return data
+        _DP_LAST_GEN_ERROR[0] = "AI Horde returned no usable image"
+        print("  dp: AI Horde returned no usable image")
+        return None
+    except Exception as e:
+        try:
+            body = e.read().decode("utf-8", "ignore")[:200]
+        except Exception:
+            body = ""
+        _DP_LAST_GEN_ERROR[0] = "AI Horde failed"
+        print(f"  dp: AI Horde failed — {str(e)[:80]}; body={body!r}")
+        return None
+
+
+def _dp_gen_kavel(prompt):
+    try:
+        anon = "fb-ec2-" + uuid.uuid4().hex[:12]
+        headers = {
+            "content-type": "application/json",
+            "x-anon-id": anon,
+            "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/157.0.0.0 Safari/537.36"),
+            "Origin": "https://www.kavel.ai",
+            "Referer": "https://www.kavel.ai/",
+        }
+        body = json.dumps({
+            "provider": "kie", "mediaType": "image",
+            "model": "kavel-image-v1", "scene": "text-to-image",
+            "prompt": prompt, "options": {"aspect_ratio": "1:1"},
+        }).encode()
+        req = urllib.request.Request(
+            "https://www.kavel.ai/api/ai/generate", data=body,
+            headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            sub = json.loads(resp.read())
+        data = (sub or {}).get("data") or {}
+        if data.get("wall"):
+            print(f"  dp: Kavel out of credit ({data.get('reason')})")
+            return None
+        tid = data.get("id")
+        if not tid:
+            print("  dp: Kavel gave no task id")
+            return None
+        status = ""
+        st = {}
+        deadline = time.time() + DP_KAVEL_TIMEOUT_S
+        while time.time() < deadline:
+            time.sleep(12)
+            req = urllib.request.Request(
+                "https://www.kavel.ai/api/ai/anon-query"
+                f"?taskId={tid}&provider=kie&mediaType=image",
+                headers={"x-anon-id": anon,
+                         "User-Agent": headers["User-Agent"]})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    st = json.loads(resp.read())
+            except Exception:
+                continue
+            status = ((st or {}).get("data") or {}).get("status", "")
+            if status in ("success", "failed"):
+                break
+        if status != "success":
+            print(f"  dp: Kavel did not finish (status={status or 'timeout'})")
+            return None
+        imgs = ((st or {}).get("data") or {}).get("images") or []
+        if not imgs:
+            print("  dp: Kavel finished with no image")
+            return None
+        data = _dp_download_bytes(
+            imgs[0], {"User-Agent": "Mozilla/5.0"}, 60)
+        if data and _dp_valid_image(data):
+            return data
+        print("  dp: Kavel returned no usable image")
+        return None
+    except Exception as e:
+        print(f"  dp: Kavel failed — {str(e)[:80]}")
+        return None
+
+
+def _dp_generate_pic(gender, uid=None):
+    if gender not in ("male", "female"):
+        return None
+    prompt = _dp_gen_prompt(gender)
+    data = None
+    for _pname, _pfn in _dp_gen_providers():
+        try:
+            data = _pfn(prompt)
+        except Exception as e:
+            print(f"  dp: {_pname} raised — {str(e)[:80]}")
+            data = None
+        if data:
+            print(f"  dp: generated via {_pname} ({len(data)} bytes)")
+            break
+        print(f"  dp: {_pname} gave nothing — trying next provider")
+    if not data:
+        print("  dp: all DP providers failed — skipping DP")
+        return None
+    if data[:3] == b"\xff\xd8\xff":
+        ext = ".jpg"
+    elif data[:8] == b"\x89PNG\r\n\x1a\n":
+        ext = ".png"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        ext = ".webp"
+    else:
+        ext = ".jpg"
+    try:
+        DP_GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+        stem = f"gen_{DP_COUNTRY}_{gender}_{uid}" if uid else f"gen_{DP_COUNTRY}_{gender}"
+        path = DP_GENERATED_DIR / f"{stem}_{secrets.token_hex(6)}{ext}"
+        path.write_bytes(data)
+        return str(path)
+    except Exception as e:
+        print(f"  dp: could not save generated DP — {str(e)[:80]}")
+        try:
+            if "path" in locals() and path.exists():
+                path.unlink()
+        except Exception:
+            pass
+        return None
 
 def parse_accounts_file(path):
     accounts = []
@@ -630,6 +1205,11 @@ def process_account(pw, account, headless=False):
                     "detail": "profile page did not load"}
         _human_pause(1.0, 2.0)
         picked = pick_dp(name, gender)
+        if not picked and gender:
+            gen_path = _dp_generate_pic(gender)
+            if gen_path:
+                picked = {"path": gen_path, "gender": gender,
+                          "reason": "generated"}
         if not picked:
             if gender:
                 detail = (f"no DP pic for {gender} - add photos to "
