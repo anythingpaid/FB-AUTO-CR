@@ -199,6 +199,24 @@ _CLOTHES_F = (
 )
 
 
+_DP_SCENES = (
+    "sitting at a cafe table holding a coffee cup, cafe interior with other customers at tables and big windows close behind",
+    "sitting on a park bench, trees and a walking path with people close behind",
+    "sitting on house porch steps with one hand resting on the knee, brick wall, front door and potted plants close behind",
+    "standing by a big window indoors, city buildings visible through the window behind",
+    "standing on a city sidewalk, shop fronts and people walking close behind",
+    "sitting at an outdoor restaurant table with a drink, other diners and umbrellas close behind",
+    "standing in a green park, trees and people on paths close behind",
+    "sitting on a bench by a lake, water and trees close behind",
+    "standing in a hotel lobby, people and seating close behind",
+    "walking on a beach promenade, sea and people close behind",
+    "sitting on a low wall in a garden, flowers and trees close behind",
+    "standing at a street market, market stalls and shoppers close behind",
+    "sitting at a desk with a laptop, office desks and glass walls close behind",
+    "standing in a shopping mall, shops and people close behind",
+)
+
+
 _DP_NEGATIVE_PROMPT = (
     "deformed, distorted, disfigured, bad anatomy, missing eye, missing eyes, extra eye, extra eyes, missing ear, missing ears, extra ear, deformed ear, broken ear, long nose, missing nose, deformed nose, extra nose, asymmetric face, asymmetric eyes, crossed eyes, closed eyes, duplicate face, mutated, blurry, out of focus, low quality, watermark, text, logo, cartoon, painting, illustration, ugly, split image, diptych, collage, side profile, back view")
 
@@ -207,6 +225,11 @@ _HORDE_ANON_KEY = "0000000000"
 
 
 _POLLINATIONS_API_TOKEN_XOR = "KTEFLRAKDzQOaW9pA2xtGwtjLxMyMQsWHRYzAyA5DisUNTU="
+
+
+_CLOUDFLARE_XOR_KEY = 0x5A
+_CLOUDFLARE_ACCOUNT_ID_XOR = "P2M5bWk8O21tbm4+OW9uOWI7aTtiP21jbGlqOWJrbm8="
+_CLOUDFLARE_API_TOKEN_XOR = "OTwvLgUxPSMRHBwIEDsRGygubTYeMDMDKA5rFSwxHwouEmssFRMYHAIxFywIOWNia205bGo="
 
 
 _DP_LAST_PIC = [None]
@@ -274,6 +297,99 @@ def _dp_pollinations_token():
     if not _tok:
         _tok = _pollinations_baked_token() or ""
     return _tok or None
+def _cloudflare_baked_creds():
+    """Decode the baked-in Cloudflare credentials (Account ID + API
+    token). Returns (account_id, token) or (None, None) when
+    undecodable. Mirrors _pollinations_baked_token (same base64 +
+    single-byte XOR 0x5A pattern)."""
+    try:
+        import base64
+        _aid = bytes(
+            b ^ _CLOUDFLARE_XOR_KEY
+            for b in base64.b64decode(_CLOUDFLARE_ACCOUNT_ID_XOR)
+        ).decode("ascii")
+        _tok = bytes(
+            b ^ _CLOUDFLARE_XOR_KEY
+            for b in base64.b64decode(_CLOUDFLARE_API_TOKEN_XOR)
+        ).decode("ascii")
+        return (_aid or None, _tok or None)
+    except Exception:
+        return (None, None)
+
+
+def _dp_cloudflare_creds():
+    """Cloudflare Workers AI credentials: Account ID + API token.
+    Order: env CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN, else
+    ~/.cloudflare_account_id / ~/.cloudflare_api_token, else the
+    BAKED-IN credentials (Afnan 2026-11-13 — permanent, no per-user
+    setup). Returns (account_id, token) or (None, None) when no
+    source yields both."""
+    _aid = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    _tok = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+    if not _aid:
+        try:
+            _aid = (Path.home() / ".cloudflare_account_id").read_text().strip()
+        except Exception:
+            _aid = ""
+    if not _tok:
+        try:
+            _tok = (Path.home() / ".cloudflare_api_token").read_text().strip()
+        except Exception:
+            _tok = ""
+    if not _aid or not _tok:
+        _baked_aid, _baked_tok = _cloudflare_baked_creds()
+        _aid = _aid or _baked_aid
+        _tok = _tok or _baked_tok
+    return (_aid or None, _tok or None)
+
+
+def _dp_gen_cloudflare(prompt):
+    """Generate a DP via Cloudflare Workers AI (FLUX.1-schnell).
+    Watermark-free, free tier (~230 images/day at 512px, recurring,
+    resets 00:00 UTC), answers in seconds when healthy. Returns
+    image bytes or None. Needs Account ID + API token (see
+    _dp_cloudflare_creds); returns None at once when not set."""
+    account_id, token = _dp_cloudflare_creds()
+    if not account_id or not token:
+        return None
+    try:
+        payload = json.dumps({
+            "prompt": prompt,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.cloudflare.com/client/v4/accounts/"
+            f"{account_id}/ai/run/@cf/black-forest-labs/flux-1-schnell",
+            data=payload,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {token}"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            body = json.loads(resp.read())
+    except Exception as e:
+        _DP_LAST_GEN_ERROR[0] = "Cloudflare failed"
+        print(f"  dp: Cloudflare request failed — {str(e)[:80]}")
+        return None
+    result = body.get("result") if isinstance(body, dict) else None
+    if not isinstance(result, dict):
+        result = body if isinstance(body, dict) else {}
+    img_b64 = result.get("image")
+    if not img_b64 or not isinstance(img_b64, str):
+        _DP_LAST_GEN_ERROR[0] = "Cloudflare returned no image"
+        print("  dp: Cloudflare returned no image")
+        return None
+    try:
+        data = base64.b64decode(img_b64, validate=True)
+    except Exception:
+        _DP_LAST_GEN_ERROR[0] = "Cloudflare returned no usable image"
+        print("  dp: Cloudflare image was not valid Base64")
+        return None
+    if data and _dp_valid_image(data):
+        return data
+    _DP_LAST_GEN_ERROR[0] = "Cloudflare returned no usable image"
+    print("  dp: Cloudflare returned no usable image")
+    return None
+
+
 def _dp_gen_providers():
     """DP generation providers in fallback order (watermark-free
     only). AI Horde first (registered key when AIHORDE_API_KEY is
@@ -281,19 +397,20 @@ def _dp_gen_providers():
     was tried, then Pollinations klein (Bearer token, baked-in).
     Pollinations is live-proven 2026-11-13: klein, 1024x1024 square,
     private=true, no watermark with a token. Cloudflare
-    FLUX.1-schnell is DELIBERATELY NOT here: Afnan 2026-11-13
-    ("Istarha ki DPs mare accounts ko kha jain gi") — FLUX
-    portraits look obviously AI-generated and a detectable DP
-    risks the whole account being flagged/banned. A missing DP
-    ("no pic available") is safe; a fake-looking DP is not.
-    _dp_gen_cloudflare + the baked-in creds stay in the code
-    (unused) so Cloudflare can be re-enabled in one line."""
-    providers = [("AI Horde", lambda p: _dp_gen_horde(p))]
+    FLUX.1-schnell is FIRST since 2026-11-25 (Afnan approved the
+    new close-up casual style samples generated with it; fast,
+    free tier, watermark-free). Each entry is (name, fn,
+    prompt_kind): "cloudflare" uses the short prompt from
+    _dp_gen_prompt_cloudflare, "main" uses _dp_gen_prompt."""
+    providers = [("Cloudflare", lambda p: _dp_gen_cloudflare(p),
+                  "cloudflare"),
+                 ("AI Horde", lambda p: _dp_gen_horde(p), "main")]
     if _dp_horde_apikey() != _HORDE_ANON_KEY:
         providers.append(
             ("AI Horde (anonymous)",
-             lambda p: _dp_gen_horde(p, _HORDE_ANON_KEY)))
-    providers.append(("Pollinations", lambda p: _dp_gen_pollinations(p)))
+             lambda p: _dp_gen_horde(p, _HORDE_ANON_KEY), "main"))
+    providers.append(
+        ("Pollinations", lambda p: _dp_gen_pollinations(p), "main"))
     return providers
 def _dp_gen_prompt(gender):
     if gender not in ("male", "female"):
@@ -330,10 +447,10 @@ def _dp_gen_prompt(gender):
              "front-facing portrait, full face visible, both eyes looking at the camera, "
              "one single person only in the frame, no split image, no diptych, "
              "no collage, no side profile, no back view")
-    _geo = ("square frame, whole person centered, full body visible "
-            "from head to toe, camera about 4 meters away at waist "
-            "height, head near top of frame, feet near bottom of frame, "
-            "background on both sides, nothing cropped")
+    _geo = ("square frame, waist-up photo, person close to the "
+            "camera filling most of the frame, camera about 1.5 "
+            "meters away at eye level, head near top of frame, "
+            "background close behind the person on both sides")
     _cam = ("shot on iPhone, real smartphone photo, natural phone "
             "camera look, deep depth of field, background and subject "
             "both in focus, background people, shops, trees and objects "
@@ -354,22 +471,31 @@ def _dp_gen_prompt(gender):
              "the person")
     _who = random.choice(_DP_PERSONA_M if _is_male else _DP_PERSONA_F)
     _clothes = random.choice(_CLOTHES_M if _is_male else _CLOTHES_F)
-    _act = ("sitting relaxed, natural posture, hands resting naturally",
-            "sitting at a desk, looking at a laptop naturally",
-            "sitting on a bench, relaxed, looking around naturally",
-            "standing naturally, relaxed posture, hands at sides")
-    variants = (
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[0]}, {_hair[0]}, {_act[0]}, {_geo}, {_cam}, {_skin}, {_real}, sitting in a modern hotel lobby, comfortable armchair, elegant interior with warm lights and people around, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[1]}, {_hair[1]}, {_act[1]}, {_geo}, {_cam}, {_skin}, {_real}, sitting at a desk in a modern office, laptop open, glass walls and desks in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[2]}, {_hair[2]}, {_act[2]}, {_geo}, {_cam}, {_skin}, {_real}, sitting on a bench in a green park, trees and walking paths in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[3]}, {_hair[3]}, {_act[0]}, {_geo}, {_cam}, {_skin}, {_real}, sitting at a table in a modern cafe, coffee cup on the table, warm lights and people around, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[0]}, {_hair[4]}, {_act[0]}, {_geo}, {_cam}, {_skin}, {_real}, sitting at a table in a modern restaurant, warm ambient lighting and tables in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[1]}, {_hair[5]}, {_act[3]}, {_geo}, {_cam}, {_skin}, {_real}, standing in a modern shopping mall, shops and people in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[2]}, {_hair[6]}, {_act[1]}, {_geo}, {_cam}, {_skin}, {_real}, sitting in a modern co-working space, desks and laptops around, people working in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[3]}, {_hair[7]}, {_act[3]}, {_geo}, {_cam}, {_skin}, {_real}, standing by a railing on a riverside promenade, hands in pockets, {style['landmark']}, people walking at different distances in the midground, river and landmark in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-        f"Full body shot, whole person visible from head to toe, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[0]}, {_hair[2]}, {_act[3]}, {_geo}, {_cam}, {_skin}, {_real}, standing on a busy modern city street, {style['street']} shops with signage and people in the background, doing something natural in a real place, modern everyday life, sharp and clear, in focus, not blurry, not soft-focus, background in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, whole person visible in frame, no text, no watermark, not a studio portrait",
-    )
-    return random.choice(variants)
+    _scene = random.choice(_DP_SCENES)
+    _skin_i = random.randrange(len(skins))
+    _hair_i = random.randrange(len(_hair))
+    return (f"Waist-up photo, Photorealistic candid photo of a handsome {people} {person} in their early 30s, {_who}, {_face}, {_clothes}, {skins[_skin_i]}, {_hair[_hair_i]}, {_scene}, {_geo}, {_cam}, {_skin}, {_real}, sharp and clear, in focus, not blurry, not soft-focus, background close behind in sharp focus with people and objects clearly visible, not blurred, not hidden, no bokeh, no beauty filter, no skin smoothing, unedited raw photo, no text, no watermark, not a studio portrait")
+
+
+def _dp_gen_prompt_cloudflare(gender):
+    """Short prompt for Cloudflare FLUX.1-schnell (the long main
+    prompt is rejected as too long). Same close-up casual style:
+    waist-up, varied everyday scene close behind, sharp focus."""
+    if gender not in ("male", "female"):
+        raise ValueError(
+            f"_dp_gen_prompt_cloudflare: unknown gender {gender!r}")
+    _is_male = (gender == "male")
+    _who = random.choice(_DP_PERSONA_M if _is_male else _DP_PERSONA_F)
+    _clothes = random.choice(_CLOTHES_M if _is_male else _CLOTHES_F)
+    _scene = random.choice(_DP_SCENES)
+    _people = _DP_COUNTRY_STYLE.get(DP_COUNTRY, {}).get("people", "")
+    _who_full = f"{_people} {_who}" if _people else _who
+    return (f"waist-up photo of a {_who_full}, {_clothes}, {_scene}, "
+            "looking at the camera, casual real phone photo, "
+            "natural daylight, everything in sharp focus, "
+            "background close behind and clearly visible, "
+            "natural skin texture, photorealistic, no text, "
+            "no watermark")
 
 
 def _dp_download_bytes(url, headers, timeout_s):
@@ -593,11 +719,12 @@ def _dp_gen_kavel(prompt):
 def _dp_generate_pic(gender, uid=None):
     if gender not in ("male", "female"):
         return None
-    prompt = _dp_gen_prompt(gender)
+    _prompts = {"main": _dp_gen_prompt(gender),
+                "cloudflare": _dp_gen_prompt_cloudflare(gender)}
     data = None
-    for _pname, _pfn in _dp_gen_providers():
+    for _pname, _pfn, _pkind in _dp_gen_providers():
         try:
-            data = _pfn(prompt)
+            data = _pfn(_prompts[_pkind])
         except Exception as e:
             print(f"  dp: {_pname} raised — {str(e)[:80]}")
             data = None
