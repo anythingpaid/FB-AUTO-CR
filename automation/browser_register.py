@@ -56,6 +56,30 @@ from core.human_behavior import (
 
 PAGE_CREATE_MODE = "id_only"
 
+AGE_RANGE = (18, 35)
+
+
+def get_age_range_choice():
+    """Ask the user which age range the IDs' birthdays must fall in."""
+    print(f" {GREEN}[{RED}01{GREEN}] Age 18-35{WHITE}")
+    print(f" {GREEN}[{RED}02{GREEN}] Age 35-50{WHITE}")
+    choice = input(f" {GREEN}[{RED}●{GREEN}] Select Age (1/2) [1] ").strip()
+    if choice == "2":
+        return (35, 50)
+    return (18, 35)
+
+
+def resolve_age_range():
+    """Env FB_AGE_RANGE (18-35|35-50) wins, else ask on a tty."""
+    env = os.environ.get("FB_AGE_RANGE", "").strip()
+    if env == "35-50":
+        return (35, 50)
+    if env == "18-35":
+        return (18, 35)
+    if sys.stdin.isatty():
+        return get_age_range_choice()
+    return (18, 35)
+
 
 def _human_pause(min_s=1.0, max_s=3.0):
     """Random pause between actions (shared human behavior)."""
@@ -591,8 +615,8 @@ def browser_create_account(page, phone_number, password, counter=None, sms_url=N
             break
     gender = gender_from_name(first_name)
 
-    # Birthday: 18-40 years old (matches HTTP version)
-    birth_date = fake.date_of_birth(minimum_age=18, maximum_age=40)
+    # Birthday: age range picked by the user at mode start
+    birth_date = fake.date_of_birth(minimum_age=AGE_RANGE[0], maximum_age=AGE_RANGE[1])
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     birth_month = months[birth_date.month - 1]
@@ -1501,6 +1525,7 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
     """Run browser sessions, restarting automatically if the
     Playwright driver dies mid-run. Resumes at the same account -
     its launch never happened, so no number is burned."""
+    global AGE_RANGE
     if not PLAYWRIGHT_AVAILABLE:
         print(f"{RED}Playwright not installed. Run: pip install playwright{WHITE}")
         print(f"{RED}Then run: playwright install chromium{WHITE}")
@@ -1509,6 +1534,7 @@ def run_browser_mode(numbers, password_config, counter=None, page_mode="id_only"
         counter = Counter()
     from core.browser_launcher import get_browser_choice
     _browser_type = get_browser_choice()
+    AGE_RANGE = resolve_age_range()
     _progress = [0]
     _start_idx = 0
     for _attempt in range(10):
