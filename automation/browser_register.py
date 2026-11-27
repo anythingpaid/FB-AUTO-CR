@@ -63,19 +63,24 @@ def get_age_range_choice():
     """Ask the user which age range the IDs' birthdays must fall in."""
     print(f" {GREEN}[{RED}01{GREEN}] Age 18-35{WHITE}")
     print(f" {GREEN}[{RED}02{GREEN}] Age 35-50{WHITE}")
-    choice = input(f" {GREEN}[{RED}●{GREEN}] Select Age (1/2) [1] ").strip()
+    print(f" {GREEN}[{RED}03{GREEN}] Random{WHITE}")
+    choice = input(f" {GREEN}[{RED}●{GREEN}] Select Age (1/2/3) [1] ").strip()
     if choice == "2":
         return (35, 50)
+    if choice == "3":
+        return (18, 40)
     return (18, 35)
 
 
 def resolve_age_range():
-    """Env FB_AGE_RANGE (18-35|35-50) wins, else ask on a tty."""
+    """Env FB_AGE_RANGE (18-35|35-50|random) wins, else ask on a tty."""
     env = os.environ.get("FB_AGE_RANGE", "").strip()
     if env == "35-50":
         return (35, 50)
     if env == "18-35":
         return (18, 35)
+    if env == "random":
+        return (18, 40)
     if sys.stdin.isatty():
         return get_age_range_choice()
     return (18, 35)
