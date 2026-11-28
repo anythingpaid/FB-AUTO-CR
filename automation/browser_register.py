@@ -65,6 +65,7 @@ def get_age_range_choice():
     print(f" {GREEN}[{RED}02{GREEN}] Age 35-50{WHITE}")
     print(f" {GREEN}[{RED}03{GREEN}] Random{WHITE}")
     choice = input(f" {GREEN}[{RED}●{GREEN}] Select Age (1/2/3) [1] ").strip()
+    os.system("cls" if os.name == "nt" else "clear")
     if choice == "2":
         return (35, 50)
     if choice == "3":
