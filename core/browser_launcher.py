@@ -19,6 +19,7 @@ with an error.
 
 Used by all browser-based modes.
 """
+import os
 import random
 import urllib.request
 import zipfile
@@ -333,6 +334,7 @@ def get_browser_choice():
     }
     _picked = _map.get(_choice, "rotation")
     print(f"[Browser] Selected: {_picked}")
+    os.system("cls" if os.name == "nt" else "clear")
     return _picked
 
 
