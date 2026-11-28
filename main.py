@@ -43,6 +43,7 @@ def get_page_create_choice():
     print(f" {GREEN}[{RED}02{GREEN}] ID + Page")
     print(f"{LINE}")
     choice = input(f" {GREEN}[{RED}●{GREEN}] Select Page (1/2) [1] {EKL} ").strip()
+    os.system("cls" if os.name == "nt" else "clear")
     if choice == "2":
         return "id+page"
     return "id_only"
@@ -73,6 +74,7 @@ def run_create():
     print(f" {GREEN}[{RED}05{GREEN}] Cookie Extract {WHITE}(Login IDs, save uid+password+cookies)")
     print(f"{LINE}")
     mode_choice = input(f" {GREEN}[{RED}●{GREEN}] Select Mode (1/2/3/4/5) [1] {EKL} ").strip()
+    os.system("cls" if os.name == "nt" else "clear")
     if mode_choice == "5":
         # Cookie Extract: login IDs, save uid+password+cookies.
         # Standalone: no creation setup, no numbers, no proxies.
